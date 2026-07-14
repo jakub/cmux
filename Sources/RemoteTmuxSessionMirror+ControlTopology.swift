@@ -37,6 +37,32 @@ extension RemoteTmuxSessionMirror {
         guard previousSurfaceID != surfaceID else { return }
         if let previousSurfaceID { onControlSurfaceRemoved(previousSurfaceID) }
         controlSurfaceIdByPane[tmuxPaneID] = surfaceID
+        publishLocalPrimaryPaneContext(tmuxPaneID: tmuxPaneID, surfaceID: surfaceID)
+    }
+
+    func publishLocalPrimaryPaneContexts() {
+        guard publishesLocalPrimaryPaneContext else { return }
+        for (tmuxPaneID, surfaceID) in controlSurfaceIdByPane {
+            publishLocalPrimaryPaneContext(tmuxPaneID: tmuxPaneID, surfaceID: surfaceID)
+        }
+    }
+
+    private func publishLocalPrimaryPaneContext(tmuxPaneID: Int, surfaceID: UUID?) {
+        guard publishesLocalPrimaryPaneContext else { return }
+        guard let workspaceID = workspace?.id else { return }
+        if let surfaceID {
+            _ = connection.send(
+                "set-option -p -t %\(tmuxPaneID) @cmux_workspace_id "
+                    + RemoteTmuxHost.shellSingleQuoted(workspaceID.uuidString)
+            )
+            _ = connection.send(
+                "set-option -p -t %\(tmuxPaneID) @cmux_surface_id "
+                    + RemoteTmuxHost.shellSingleQuoted(surfaceID.uuidString)
+            )
+        } else {
+            _ = connection.send("set-option -p -u -t %\(tmuxPaneID) @cmux_workspace_id")
+            _ = connection.send("set-option -p -u -t %\(tmuxPaneID) @cmux_surface_id")
+        }
     }
 
     func controlPaneLocations(

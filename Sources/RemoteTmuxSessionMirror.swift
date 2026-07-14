@@ -15,6 +15,7 @@ final class RemoteTmuxSessionMirror: RemoteTmuxControlPaneMutationOwner {
     /// de-dup works before the control stream reports `connection.sessionId`.
     let seededSessionId: Int?
     let connection: RemoteTmuxControlConnection
+    let publishesLocalPrimaryPaneContext: Bool
     let onControlPaneRemoved: (PaneID, UUID?) -> Void
     let onControlSurfaceRemoved: (UUID) -> Void
 
@@ -81,6 +82,7 @@ final class RemoteTmuxSessionMirror: RemoteTmuxControlPaneMutationOwner {
         connection: RemoteTmuxControlConnection,
         tabManager: TabManager,
         workspace: Workspace,
+        publishesLocalPrimaryPaneContext: Bool = false,
         onControlPaneRemoved: @escaping (PaneID, UUID?) -> Void = { _, _ in },
         onControlSurfaceRemoved: @escaping (UUID) -> Void = { _ in }
     ) {
@@ -88,6 +90,7 @@ final class RemoteTmuxSessionMirror: RemoteTmuxControlPaneMutationOwner {
         self.sessionName = sessionName
         self.seededSessionId = seededSessionId
         self.connection = connection
+        self.publishesLocalPrimaryPaneContext = publishesLocalPrimaryPaneContext
         self.onControlPaneRemoved = onControlPaneRemoved
         self.onControlSurfaceRemoved = onControlSurfaceRemoved
         self.tabManager = tabManager
@@ -118,6 +121,7 @@ final class RemoteTmuxSessionMirror: RemoteTmuxControlPaneMutationOwner {
             },
             onReconnectReady: { [weak self] in
                 self?.forceResizeAllVisibleMirrors()
+                self?.publishLocalPrimaryPaneContexts()
             },
             onExit: { [weak self] in
                 self?.handleConnectionExited()

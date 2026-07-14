@@ -6,6 +6,29 @@
 # so that Claude Code hooks fire back into cmux for notifications/status.
 # Outside cmux, it passes through to the real claude binary unchanged.
 
+# Local-primary terminals are tmux panes, so their stable cmux routing identity
+# lives on the pane rather than in tmux's server-global environment. Recover it
+# before deciding whether this invocation is inside cmux.
+cmux_claude_wrapper_refresh_tmux_pane_context() {
+    [[ -n "${TMUX_PANE:-}" ]] || return 0
+    command -v tmux >/dev/null 2>&1 || return 0
+
+    local context workspace_id surface_id
+    context="$(tmux display-message -p -t "$TMUX_PANE" \
+        -F '#{@cmux_workspace_id}|#{@cmux_surface_id}' 2>/dev/null)" || return 0
+    [[ "$context" == *"|"* ]] || return 0
+    workspace_id="${context%%|*}"
+    surface_id="${context#*|}"
+    [[ -n "$workspace_id" && -n "$surface_id" ]] || return 0
+
+    export CMUX_WORKSPACE_ID="$workspace_id"
+    export CMUX_TAB_ID="$workspace_id"
+    export CMUX_SURFACE_ID="$surface_id"
+    export CMUX_PANEL_ID="$surface_id"
+}
+
+cmux_claude_wrapper_refresh_tmux_pane_context
+
 cmux_claude_wrapper_is_self_or_shim() {
     local candidate="$1"
     [[ -n "$candidate" ]] || return 1

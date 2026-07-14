@@ -4,6 +4,88 @@ import Foundation
 import Testing
 
 @Suite struct ClaudeWrapperResumeEnvironmentTests {
+    @Test func bundledClaudeWrapperRecoversCmuxIdentityFromTmuxPaneOptions() throws {
+        let fileManager = FileManager.default
+        let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let wrapperURL = repoRoot.appendingPathComponent("Resources/bin/cmux-claude-wrapper", isDirectory: false)
+        let sandbox = URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("cmux-tmux-pane-context-\(String(UUID().uuidString.prefix(8)))", isDirectory: true)
+        let binDir = sandbox.appendingPathComponent("bin", isDirectory: true)
+        let homeDir = sandbox.appendingPathComponent("home", isDirectory: true)
+        try fileManager.createDirectory(at: binDir, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: homeDir, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: sandbox) }
+
+        let workspaceID = UUID().uuidString
+        let surfaceID = UUID().uuidString
+        let recordURL = sandbox.appendingPathComponent("record.txt", isDirectory: false)
+        try writeExecutable(
+            binDir.appendingPathComponent("claude", isDirectory: false),
+            """
+            #!/usr/bin/env bash
+            {
+              printf 'argv=%s\n' "$*"
+              printf 'workspace=%s\n' "${CMUX_WORKSPACE_ID:-}"
+              printf 'tab=%s\n' "${CMUX_TAB_ID:-}"
+              printf 'surface=%s\n' "${CMUX_SURFACE_ID:-}"
+              printf 'panel=%s\n' "${CMUX_PANEL_ID:-}"
+            } > \(shellQuotedForTest(recordURL.path))
+            """
+        )
+        try writeExecutable(
+            binDir.appendingPathComponent("tmux", isDirectory: false),
+            """
+            #!/usr/bin/env bash
+            if [[ "${1:-}" == "display-message" ]]; then
+              printf '%s|%s\n' '\(workspaceID)' '\(surfaceID)'
+              exit 0
+            fi
+            exit 1
+            """
+        )
+
+        let socketURL = sandbox.appendingPathComponent("cmux.sock", isDirectory: false)
+        let socketFD = try bindUnixSocket(at: socketURL.path)
+        defer {
+            Darwin.close(socketFD)
+            unlink(socketURL.path)
+        }
+        let fakeCmuxURL = binDir.appendingPathComponent("cmux", isDirectory: false)
+        try writeExecutable(
+            fakeCmuxURL,
+            """
+            #!/usr/bin/env bash
+            if [[ "${1:-}" == "--socket" && "${3:-}" == "ping" ]]; then
+              exit 0
+            fi
+            exit 1
+            """
+        )
+
+        let process = Process()
+        process.executableURL = wrapperURL
+        process.environment = [
+            "PATH": "\(binDir.path):/usr/bin:/bin",
+            "HOME": homeDir.path,
+            "TMPDIR": sandbox.path,
+            "TMUX": "/tmp/tmux-test/default,123,0",
+            "TMUX_PANE": "%7",
+            "CMUX_SOCKET_PATH": socketURL.path,
+            "CMUX_BUNDLED_CLI_PATH": fakeCmuxURL.path,
+        ]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try runWithBoundedWait(process, shellDescription: "cmux-claude-wrapper tmux pane context")
+
+        let recorded = try String(contentsOf: recordURL, encoding: .utf8)
+        #expect(recorded.contains("--settings"), Comment(rawValue: recorded))
+        #expect(recorded.contains("workspace=\(workspaceID)"), Comment(rawValue: recorded))
+        #expect(recorded.contains("tab=\(workspaceID)"), Comment(rawValue: recorded))
+        #expect(recorded.contains("surface=\(surfaceID)"), Comment(rawValue: recorded))
+        #expect(recorded.contains("panel=\(surfaceID)"), Comment(rawValue: recorded))
+    }
+
     @Test func bundledClaudeWrapperScrubsSessionIdentityAndPreservesTrustBypassOnResume() throws {
         let fileManager = FileManager.default
         let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()

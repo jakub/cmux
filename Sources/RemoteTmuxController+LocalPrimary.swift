@@ -41,7 +41,9 @@ extension RemoteTmuxController {
         }
         localPrimaryRuntime.prepare(tabManager: tabManager)
         let host = Self.localPrimaryHost
-        let session = try await transport(for: host).createSession(
+        let transport = transport(for: host)
+        try await transport.assertMinimumTmuxVersion(checkClientWhenNoServer: true)
+        let session = try await localTmuxServerBootstrapper.createSession(
             name: title,
             workingDirectory: workingDirectory
         )
@@ -134,7 +136,8 @@ extension RemoteTmuxController {
         var sessions = try await transport.discoverMirrorSessions(createIfEmpty: false)
         var preferredSession = localPrimaryRuntime.pendingPreferredSession
         if sessions.isEmpty || localPrimaryRuntime.shouldCreateRequestedSession {
-            let session = try await transport.createSession(
+            try await transport.assertMinimumTmuxVersion(checkClientWhenNoServer: true)
+            let session = try await localTmuxServerBootstrapper.createSession(
                 name: localPrimaryRuntime.shouldCreateRequestedSession ? localPrimaryRuntime.requestedSessionName : nil,
                 workingDirectory: localPrimaryRuntime.shouldCreateRequestedSession
                     ? localPrimaryRuntime.requestedWorkingDirectory

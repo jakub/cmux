@@ -124,6 +124,143 @@ Before launching a new tagged run, clean up any older tags you started in this s
 
 For iOS dev auth, `ios/scripts/reload.sh` and `scripts/mobile-dev-launch.sh` auto-sign-in from `~/.secrets/cmuxterm-dev.env`. If the phone lands on the login screen or the helper reports missing dev sign-in credentials, do not ask the user to manually authenticate every build. Tell them to run `scripts/setup-team-dev.sh` once from any cmux checkout; it prompts for and verifies their Stack login, writes `~/.secrets/cmuxterm-dev.env` with chmod 600, and future agents can auto-auth iOS DEBUG reloads. Manual fallback: create that file with `CMUX_DOGFOOD_STACK_EMAIL=...` and `CMUX_DOGFOOD_STACK_PASSWORD=...`.
 
+## Local tmux primary experiment
+
+Commit `b0e3566a7` adds an opt-in macOS mode in which localhost tmux sessions are
+the source of truth for terminal workspaces. The current implementation uses
+the existing remote-tmux stack over `ssh localhost`; it does not talk directly
+to the tmux socket yet.
+
+The important ownership split is:
+
+- `Sources/LocalTmuxPrimaryRuntime.swift` owns the process-latched reconciliation
+  state and coalescing task.
+- `Sources/RemoteTmuxController+LocalPrimary.swift` discovers or creates localhost
+  sessions, mirrors them into cmux workspaces, and reconciles tmux changes.
+- `Sources/LocalTmuxServerBootstrapper.swift` is the one exception to the SSH
+  transport: it creates new localhost sessions directly from the cmux GUI
+  process. Do not move session creation back under `ssh localhost`; a tmux server
+  born under `sshd` cannot access login-keychain credentials noninteractively,
+  and every pane it later spawns inherits that restriction. Discovery, version
+  checks, control mode, and mutations after creation still use SSH. When no cwd
+  is requested, the bootstrapper must pass the user's home directory explicitly;
+  the app process may have `/` as its cwd, and tmux otherwise inherits it.
+- Local-primary cmux routing identity is pane-scoped. The session mirror publishes
+  `@cmux_workspace_id` and `@cmux_surface_id` as tmux pane options, and the Claude
+  wrapper recovers the four workspace/tab/surface/panel environment variables
+  from `$TMUX_PANE`. Do not put these ids in tmux's server-global environment:
+  multiple sessions and panes would overwrite one another.
+- `Sources/AppDelegate+LocalTmuxPrimary.swift` is the thin AppKit action/error adapter.
+- `RemoteTmuxController`, `TerminalController`, `TabManager`, and the socket
+  coordinators contain small fail-closed guards. These are deliberate boundary
+  policy checks, not copies of the reconciliation implementation. Do not remove
+  them by introducing a magical global router.
+- Settings expose `Local tmux workspaces` through the UserDefaults key
+  `localTmux.primary.enabled`. It is process-latched and requires an app restart.
+  Tagged Debug builds seed it on when the tag has no stored value; Release stays
+  opt-in.
+- Native terminal fallback is intentionally disabled while this mode is active.
+  App termination detaches from tmux and leaves the server-side sessions running.
+
+Use the stable tag `local-tmux-primary` while working on this patch:
+
+```bash
+./scripts/reload.sh --tag local-tmux-primary
+CMUX_TAG=local-tmux-primary scripts/cmux-debug-cli.sh list-workspaces
+```
+
+The full Debug bundle includes two different Ghostty artifacts:
+
+- `GhosttyKit.xcframework` is the real terminal runtime and renderer.
+- `Contents/Resources/bin/ghostty` is a small headless CLI helper used by bare
+  interactive `cmux themes` to run `ghostty +list-themes`.
+
+The helper build currently requires **exactly Zig 0.15.2**. Homebrew Zig 0.16.x
+does not satisfy `scripts/build-ghostty-cli-helper.sh`. This machine has the
+correct binary at:
+
+```text
+/opt/homebrew/Cellar/zig@0.15/0.15.2/bin/zig
+```
+
+For a full build on a compatible Xcode/SDK, put a 0.15.2 binary first on `PATH`
+and point `CMUX_ZIG` at the same binary:
+
+```bash
+export CMUX_ZIG=/absolute/path/to/zig-0.15.2
+export PATH="$(dirname "$CMUX_ZIG"):$PATH"
+zig version  # must print 0.15.2
+./scripts/reload.sh --tag local-tmux-primary
+```
+
+As verified on 2026-07-14, that exact Zig still cannot build the helper against
+the installed Xcode 27 beta SDK. Zig's bundled libc++ fails in
+`__random/clamp_to_integral.h` with `use of undeclared identifier 'INFINITY'`.
+This is a Zig 0.15.2/Xcode 27 SDK compatibility failure, not a cmux Swift source
+failure. Use Xcode 26.x for a full helper build, or use the stub build below.
+
+For local tmux work, a valid cached GhosttyKit may be reused while intentionally
+skipping only the CLI helper:
+
+```bash
+CMUX_SKIP_ZIG_BUILD=1 ./scripts/reload.sh --tag local-tmux-primary
+```
+
+The known-working build command on this machine is:
+
+```bash
+CMUX_GHOSTTYKIT_CACHE_DIR=/tmp/cmux-ghosttykit-cache-local-tmux-primary \
+  CMUX_SKIP_ZIG_BUILD=1 \
+  ./scripts/reload.sh --tag local-tmux-primary
+```
+
+The isolated cache path is useful when other cmux checkouts or agents may be
+building concurrently. It must contain (or point to) a valid GhosttyKit cache;
+otherwise omit `CMUX_GHOSTTYKIT_CACHE_DIR` and let `ensure-ghosttykit.sh` use the
+normal shared cache. This command last succeeded in 46 seconds and produced:
+
+```text
+/Users/jakub/Library/Developer/Xcode/DerivedData/cmux-local-tmux-primary/Build/Products/Debug/cmux DEV local-tmux-primary.app
+```
+
+This produces a real cmux app with the real cached GhosttyKit, but installs a
+small Mach-O stub at `Contents/Resources/bin/ghostty`. Terminal rendering, tmux,
+`cmux themes list`, `cmux themes set`, and `cmux themes clear` still work. Bare
+interactive `cmux themes` and directly invoking the bundled `ghostty` command
+fail with `ghostty CLI helper stub (zig build skipped)`. `CMUX_SKIP_ZIG_BUILD=1`
+does **not** skip `scripts/ensure-ghosttykit.sh`; a cold machine still needs a
+working pinned Zig toolchain and `./scripts/setup.sh`.
+
+`ensure-ghosttykit.sh` uses a shared cache lock. Run only one reload at a time.
+If the log repeatedly reports `Lock stale (>300s)`, stop extra reload waiters and
+verify that no GhosttyKit build is active before removing a lock; competing stale
+waiters can otherwise starve each other. In a restricted Codex sandbox, an
+`Operation not permitted` error under `~/Library/Developer/Xcode/DerivedData` is
+a filesystem-permission failure, not a compile failure: rerun the same tagged
+reload with approval to write DerivedData.
+
+The focused verification used for this patch is:
+
+```bash
+swift test --package-path Packages/macOS/CmuxControlSocket
+swift test --package-path Packages/macOS/CmuxSettings
+swift test --package-path Packages/macOS/CmuxSettingsUI
+
+xcodebuild -project cmux.xcodeproj -scheme cmux-unit -configuration Debug \
+  -destination 'platform=macOS' \
+  -derivedDataPath /tmp/cmux-local-tmux-primary-tests \
+  CMUX_SKIP_ZIG_BUILD=1 \
+  'OTHER_SWIFT_FLAGS=$(inherited) -Xllvm -aarch64-enable-global-isel-at-O=-1' \
+  test \
+  -only-testing:cmuxTests/RemoteTmuxAuthTests \
+  -only-testing:cmuxTests/RemoteTmuxMirrorTargetingTests \
+  -only-testing:cmuxTests/RemoteTmuxNewWindowCwdTests
+```
+
+The last verified focused run passed 67 tests. The patch also adds 22 localized
+strings; English and Japanese values were audited, and the string catalog was
+compiled by the app test target.
+
 ## Regression test commit policy
 
 When adding a regression test for a bug fix, use a two-commit structure so CI proves the test catches the bug:

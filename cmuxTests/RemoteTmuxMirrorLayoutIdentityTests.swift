@@ -10,6 +10,26 @@ import Testing
 
 @MainActor
 @Suite struct RemoteTmuxMirrorLayoutIdentityTests {
+    @Test("local-primary mirror publishes pane-scoped cmux hook identity")
+    func localPrimaryMirrorPublishesPaneScopedCmuxHookIdentity() throws {
+        let harness = try Harness(publishesLocalPrimaryPaneContext: true)
+        defer { harness.tearDown() }
+
+        let panel = try #require(harness.singlePanePanel(tmuxPaneID: 11))
+        harness.writer.close()
+        let commands = try #require(String(
+            bytes: try harness.pipe.fileHandleForReading.readToEnd() ?? Data(),
+            encoding: .utf8
+        ))
+
+        #expect(commands.contains(
+            "set-option -p -t %11 @cmux_workspace_id '\(harness.workspace.id.uuidString)'\n"
+        ))
+        #expect(commands.contains(
+            "set-option -p -t %11 @cmux_surface_id '\(panel.id.uuidString)'\n"
+        ))
+    }
+
     @Test("remote layout changes reconcile pane identities incrementally")
     func remoteLayoutChangesReconcilePaneIdentitiesIncrementally() throws {
         let harness = try Harness()
@@ -356,7 +376,8 @@ final class RemoteTmuxSessionMirrorLayoutHarness {
         initialLayout: String = "f92f,80x24,0,0,11",
         initialWindowLines: [String]? = nil,
         initialRects: [String] = ["%11 0 0 80 24 1 off :zsh"],
-        initialRectsByWindow: [Int: [String]]? = nil
+        initialRectsByWindow: [Int: [String]]? = nil,
+        publishesLocalPrimaryPaneContext: Bool = false
     ) throws {
         connection = RemoteTmuxControlConnection(
             host: RemoteTmuxHost(destination: "user@host"),
@@ -398,6 +419,7 @@ final class RemoteTmuxSessionMirrorLayoutHarness {
             connection: connection,
             tabManager: manager,
             workspace: workspace,
+            publishesLocalPrimaryPaneContext: publishesLocalPrimaryPaneContext,
             onControlPaneRemoved: TerminalController.remoteTmuxControlPaneRemovalHandler(),
             onControlSurfaceRemoved: TerminalController.remoteTmuxControlSurfaceRemovalHandler()
         )

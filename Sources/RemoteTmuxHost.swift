@@ -297,10 +297,35 @@ struct RemoteTmuxHost: Sendable, Equatable, Identifiable {
     /// though it works in the user's normal terminal. Resolve the binary in a
     /// tiny `/bin/sh` wrapper, then `exec` it with the original arguments so both
     /// one-shot probes and `tmux -CC` use the same path behavior.
-    static func tmuxRemoteCommand(arguments: [String]) -> String {
-        (["/bin/sh", "-c", tmuxResolverShellScript, "cmux-remote-tmux"] + arguments)
+    ///
+    /// - Parameter tmuxTmpDirectory: `TMUX_TMPDIR` for the remote tmux, or `nil`
+    ///   to use the remote's ambient server. `ssh` does not forward the
+    ///   environment, so an isolated server (see ``TmuxServerIsolation``) is
+    ///   reachable only if the command carries the value itself.
+    static func tmuxRemoteCommand(
+        arguments: [String],
+        tmuxTmpDirectory: String? = TmuxServerIsolation.tmuxTmpDirectoryForCommands()
+    ) -> String {
+        let invocation = tmuxResolverInvocation(arguments: arguments, commandName: "cmux-remote-tmux")
+        let command = ([invocation.executable] + invocation.arguments)
             .map(shellSingleQuoted)
             .joined(separator: " ")
+        guard let tmuxTmpDirectory else { return command }
+        // The remote login shell parses this string before `/bin/sh -c` runs, so
+        // an assignment prefix here applies to that `/bin/sh` and its `exec`ed tmux.
+        return "TMUX_TMPDIR=\(shellSingleQuoted(tmuxTmpDirectory)) \(command)"
+    }
+
+    /// Builds the local process invocation that resolves tmux using the same
+    /// path policy as remote commands.
+    static func tmuxResolverInvocation(
+        arguments: [String],
+        commandName: String
+    ) -> (executable: String, arguments: [String]) {
+        (
+            executable: "/bin/sh",
+            arguments: ["-c", tmuxResolverShellScript, commandName] + arguments
+        )
     }
 
     /// Stable stderr marker the resolver emits with exit 127 when no tmux binary is usable.

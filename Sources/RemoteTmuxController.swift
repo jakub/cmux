@@ -33,11 +33,16 @@ final class RemoteTmuxController {
 
     nonisolated static let localPrimaryHost = RemoteTmuxHost(destination: "localhost")
     let localPrimaryRuntime: LocalTmuxPrimaryRuntime
+    let localTmuxServerBootstrapper: LocalTmuxServerBootstrapper
 
     var localPrimaryEnabled: Bool { localPrimaryRuntime.isEnabled }
 
-    init(localPrimaryEnabled: Bool = RemoteTmuxController.isLocalPrimaryEnabled) {
+    init(
+        localPrimaryEnabled: Bool = RemoteTmuxController.isLocalPrimaryEnabled,
+        localTmuxServerBootstrapper: LocalTmuxServerBootstrapper = LocalTmuxServerBootstrapper()
+    ) {
         localPrimaryRuntime = LocalTmuxPrimaryRuntime(isEnabled: localPrimaryEnabled)
+        self.localTmuxServerBootstrapper = localTmuxServerBootstrapper
     }
 
     /// Makes local-primary mode the default for tagged development builds while
@@ -371,6 +376,8 @@ final class RemoteTmuxController {
             connection: connection,
             tabManager: tabManager,
             workspace: workspace,
+            publishesLocalPrimaryPaneContext: localPrimaryEnabled
+                && host.connectionHash == Self.localPrimaryHost.connectionHash,
             onControlPaneRemoved: TerminalController.remoteTmuxControlPaneRemovalHandler(),
             onControlSurfaceRemoved: TerminalController.remoteTmuxControlSurfaceRemovalHandler()
         )

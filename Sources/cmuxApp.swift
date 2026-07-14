@@ -69,6 +69,13 @@ struct cmuxApp: App {
     }
 
     init() {
+        // Redirect an XCTest instance onto its own tmux server before anything
+        // can spawn a shell or run a tmux command: the shell integration
+        // publishes this instance's identity into the server's global
+        // environment, so sharing the developer's server corrupts it (see
+        // `TmuxServerIsolation`). `setenv` only reaches children created after
+        // it, which is why this is the first statement in the composition root.
+        TmuxServerIsolation.activateIfNeeded()
         // Gather settings package dependencies once. The runtime itself
         // is assigned after the saved language override below, because
         // it owns localized search-index text for the process lifetime.

@@ -76,6 +76,65 @@ import Testing
         #expect(!RemoteTmuxSSHTransport.indicatesAuthRequired(socketMissing))
     }
 
+    @Test func localPrimaryBootstrapCreatesSessionWithoutSSH() async throws {
+        let root = try temporaryDirectory(prefix: "local-tmux-bootstrap")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let invocationLog = root.appendingPathComponent("invocations.log")
+        let fakeShell = root.appendingPathComponent("fake-shell")
+        try writeExecutable(
+            at: fakeShell,
+            contents: """
+            #!/bin/sh
+            printf '%s\n' "$*" >> '\(invocationLog.path)'
+            case " $* " in
+              *" -V "*) printf 'tmux 3.4\n' ;;
+              *) printf '$7:1:0:123:claude-work\n' ;;
+            esac
+            """
+        )
+
+        let bootstrapper = LocalTmuxServerBootstrapper(shellExecutablePath: fakeShell.path)
+        let session = try await bootstrapper.createSession(
+            name: "claude-work",
+            workingDirectory: "/tmp/work tree"
+        )
+
+        #expect(session.id == "$7")
+        #expect(session.name == "claude-work")
+        let invocations = try String(contentsOf: invocationLog, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        #expect(invocations.count == 1)
+        #expect(invocations.allSatisfy { !$0.contains("ssh") })
+        #expect(invocations[0].contains("cmux-local-tmux new-session -d -P -F"))
+        #expect(invocations[0].hasSuffix("-s claude-work -c /tmp/work tree"))
+    }
+
+    @Test func localPrimaryBootstrapDefaultsImplicitWorkingDirectoryToHome() async throws {
+        let root = try temporaryDirectory(prefix: "local-tmux-bootstrap-home")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let invocationLog = root.appendingPathComponent("invocations.log")
+        let fakeShell = root.appendingPathComponent("fake-shell")
+        try writeExecutable(
+            at: fakeShell,
+            contents: """
+            #!/bin/sh
+            printf '%s\n' "$*" > '\(invocationLog.path)'
+            printf '$8:1:0:124:home-session\n'
+            """
+        )
+
+        let bootstrapper = LocalTmuxServerBootstrapper(
+            shellExecutablePath: fakeShell.path,
+            defaultWorkingDirectory: "/Users/tester"
+        )
+        _ = try await bootstrapper.createSession(name: nil, workingDirectory: nil)
+
+        let invocation = try String(contentsOf: invocationLog, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(invocation.hasSuffix("-c /Users/tester"))
+    }
+
     @Test func staleSSHAgentErrorDoesNotMaskPermissionDeniedAuthRequirement() {
         let stderr = """
         Error connecting to agent: No such file or directory

@@ -42,30 +42,8 @@ private func isBareDebugBundleIdentifier(
 }
 
 private func xctestDebugSocketPath(environment: [String: String]) -> String? {
-    let indicators = [
-        "XCTestSessionIdentifier",
-        "XCTestConfigurationFilePath",
-        "XCTestBundlePath",
-        "XCInjectBundle",
-        "XCInjectBundleInto",
-        "DYLD_INSERT_LIBRARIES",
-    ]
-    guard let source = indicators.compactMap({ key -> String? in
-        guard let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !value.isEmpty else {
-            return nil
-        }
-        if key == "DYLD_INSERT_LIBRARIES",
-           !value.contains("libXCTest") {
-            return nil
-        }
-        return value
-    }).first else {
+    guard let discriminator = XCTestRunIdentity.discriminator(environment: environment) else {
         return nil
     }
-
-    let hash = source.utf8.reduce(UInt64(0xcbf29ce484222325)) { partial, byte in
-        (partial ^ UInt64(byte)) &* 0x100000001b3
-    }
-    return "/tmp/cmux-xctest-\(String(hash, radix: 16)).sock"
+    return "/tmp/cmux-xctest-\(discriminator).sock"
 }
