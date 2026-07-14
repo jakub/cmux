@@ -135,6 +135,124 @@ import Testing
         #expect(invocation.hasSuffix("-c /Users/tester"))
     }
 
+    @Test func localTransportRunsDiscoveryAndCreationWithoutSSH() async throws {
+        let root = try temporaryDirectory(prefix: "local-tmux-direct-commands")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let invocationLog = root.appendingPathComponent("invocations.log")
+        let fakeShell = root.appendingPathComponent("fake-shell")
+        try writeExecutable(
+            at: fakeShell,
+            contents: """
+            #!/bin/sh
+            printf '%s|TMUX=%s|TMUX_PANE=%s|TMUX_TMPDIR=%s\n' \
+              "$*" "${TMUX-}" "${TMUX_PANE-}" "${TMUX_TMPDIR-}" >> '\(invocationLog.path)'
+            case " $* " in
+              *" list-sessions "*) printf '$4:1:0:123:direct-work\n' ;;
+              *" new-session "*) printf '$5:1:0:124:home-work\n' ;;
+            esac
+            """
+        )
+
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            shellExecutablePath: fakeShell.path,
+            environment: [
+                "HOME": "/Users/tester",
+                "TMUX": "/tmp/tmux-501/default,99,0",
+                "TMUX_PANE": "%9",
+                "TMUX_TMPDIR": "/tmp/direct-lab",
+            ],
+            defaultWorkingDirectory: "/Users/tester"
+        )
+        let sessions = try await transport.listSessions()
+        let created = try await transport.createSession(name: "home-work", workingDirectory: nil)
+
+        #expect(sessions.map(\.name) == ["direct-work"])
+        #expect(created.name == "home-work")
+        let invocations = try String(contentsOf: invocationLog, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        #expect(invocations.count == 2)
+        #expect(invocations.allSatisfy { !$0.contains("ssh") })
+        #expect(invocations.allSatisfy { $0.contains("|TMUX=|TMUX_PANE=|TMUX_TMPDIR=/tmp/direct-lab") })
+        #expect(invocations[0].contains("cmux-local-tmux list-sessions -F"))
+        #expect(invocations[1].hasPrefix("-c "))
+        #expect(invocations[1].contains("cmux-local-tmux new-session -d -P -F"))
+        #expect(invocations[1].contains("-s home-work -c /Users/tester"))
+    }
+
+    @Test func localTransportBuildsDirectControlInvocationWithSanitizedEnvironment() {
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            shellExecutablePath: "/test/bin/sh",
+            environment: [
+                "HOME": "/Users/tester",
+                "TMUX": "/tmp/tmux-501/default,99,0",
+                "TMUX_PANE": "%9",
+                "TMUX_TMPDIR": "/tmp/direct-lab",
+            ]
+        )
+
+        let invocation = transport.controlProcessInvocation(
+            sessionName: "work tree",
+            createIfMissing: false
+        )
+
+        #expect(transport.kind == .local)
+        #expect(invocation.executablePath == "/test/bin/sh")
+        #expect(invocation.arguments.suffix(4) == ["-CC", "attach-session", "-t", "work tree"])
+        #expect(invocation.environment?["TMUX"] == nil)
+        #expect(invocation.environment?["TMUX_PANE"] == nil)
+        #expect(invocation.environment?["TMUX_TMPDIR"] == "/tmp/direct-lab")
+        #expect(invocation.environment?["HOME"] == "/Users/tester")
+    }
+
+    @Test @MainActor func controllerSelectsDirectTransportOnlyForLocalPrimaryEndpoint() {
+        let enabled = RemoteTmuxController(localPrimaryEnabled: true)
+        #expect(enabled.transport(for: RemoteTmuxController.localPrimaryHost).kind == .local)
+        #expect(enabled.transport(for: RemoteTmuxHost(destination: "user@remote")).kind == .ssh)
+
+        let disabled = RemoteTmuxController(localPrimaryEnabled: false)
+        #expect(disabled.transport(for: RemoteTmuxController.localPrimaryHost).kind == .ssh)
+    }
+
+    @Test @MainActor func directLocalControlStreamAttachesToRealTmux() async throws {
+        let root = try temporaryDirectory(prefix: "local-tmux-direct-control")
+        defer { try? FileManager.default.removeItem(at: root) }
+        var environment = ProcessInfo.processInfo.environment
+        environment["TMUX_TMPDIR"] = root.path
+        environment["TMUX"] = "/tmp/wrong-server,99,0"
+        environment["TMUX_PANE"] = "%99"
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            environment: environment,
+            defaultWorkingDirectory: root.path
+        )
+        let session = try await transport.createSession(
+            name: "cmux-direct-\(String(UUID().uuidString.prefix(8)))",
+            workingDirectory: nil
+        )
+        let connection = RemoteTmuxControlConnection(
+            host: RemoteTmuxController.localPrimaryHost,
+            sessionName: session.name,
+            transport: transport
+        )
+
+        do {
+            try connection.start()
+            #expect(await connection.waitUntilConnected())
+            #expect(connection.transportKind == .local)
+            #expect(connection.sessionId != nil)
+        } catch {
+            connection.stop()
+            _ = try? await transport.runTmux(["kill-server"])
+            throw error
+        }
+
+        connection.stop()
+        _ = try? await transport.runTmux(["kill-server"])
+    }
+
     @Test func staleSSHAgentErrorDoesNotMaskPermissionDeniedAuthRequirement() {
         let stderr = """
         Error connecting to agent: No such file or directory
