@@ -61,6 +61,7 @@ extension Workspace {
         fromPanelId panelId: UUID,
         snapshot: SessionRestorableAgentSnapshot
     ) -> Bool {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
         guard let owningTabManager,
               let launch = forkAgentWorkspaceLaunch(
                   fromPanelId: panelId,

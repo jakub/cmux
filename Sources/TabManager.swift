@@ -461,6 +461,7 @@ class TabManager: ObservableObject {
         initialWorkspaceTitle: String? = nil,
         initialWorkingDirectory: String? = nil,
         initialTerminalInput: String? = nil,
+        createInitialWorkspace: Bool = true,
         autoWelcomeIfNeeded: Bool = true,
         commandRunner: any CommandRunning = CommandRunner(),
         gitMetadataService: GitMetadataService = GitMetadataService(),
@@ -525,12 +526,14 @@ class TabManager: ObservableObject {
         workspaces.attach(host: self)
         workspaceReordering.attach(host: self)
         workspaceGrouping.attach(host: self)
-        addWorkspace(
-            title: initialWorkspaceTitle,
-            workingDirectory: initialWorkingDirectory,
-            initialTerminalInput: initialTerminalInput,
-            autoWelcomeIfNeeded: autoWelcomeIfNeeded
-        )
+        if createInitialWorkspace {
+            addWorkspace(
+                title: initialWorkspaceTitle,
+                workingDirectory: initialWorkingDirectory,
+                initialTerminalInput: initialTerminalInput,
+                autoWelcomeIfNeeded: autoWelcomeIfNeeded
+            )
+        }
         observers.append(NotificationCenter.default.addObserver(
             forName: .ghosttyDidSetTitle,
             object: nil,
@@ -1088,6 +1091,8 @@ class TabManager: ObservableObject {
                 defaultTitle = String(localized: "browser.newTab", defaultValue: "New tab")
             case .cloudVMLoading:
                 defaultTitle = String(localized: "workspace.cloudVM.defaultTitle", defaultValue: "Cloud VM")
+            case .remoteTmux:
+                defaultTitle = String(localized: "remoteTmux.workspace.defaultTitle", defaultValue: "tmux")
             }
             let newWorkspace = makeWorkspaceForCreation(
                 title: title ?? defaultTitle,
@@ -1743,7 +1748,8 @@ class TabManager: ObservableObject {
         selectAnchor: Bool = true,
         collapseSidebarSelection: Bool = true
     ) -> UUID? {
-        workspaceGrouping.createWorkspaceGroup(
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return nil }
+        return workspaceGrouping.createWorkspaceGroup(
             name: name,
             childWorkspaceIds: childWorkspaceIds,
             anchorWorkingDirectory: anchorWorkingDirectory,
@@ -1764,7 +1770,8 @@ class TabManager: ObservableObject {
         initialBrowserOmnibarVisible: Bool = true,
         initialBrowserTransparentBackground: Bool = false
     ) -> Workspace? {
-        workspaceGrouping.createWorkspaceInGroup(
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return nil }
+        return workspaceGrouping.createWorkspaceInGroup(
             groupId: groupId,
             placement: explicitPlacement,
             referenceWorkspaceId: referenceWorkspaceId,
@@ -1994,12 +2001,13 @@ class TabManager: ObservableObject {
         guard tabs.count > 1 else { return }
         panelTitleUpdateCoalescer.flushNow()
         sentryBreadcrumb("workspace.close", data: ["tabCount": tabs.count - 1])
-        // Closing a mirrored remote tmux workspace DETACHES from the remote session,
-        // leaving it alive on the server for resume. Killing the session is never a
-        // side effect of closing a tab (PR #7264 review); it is only ever an explicit
-        // disconnect action.
         if workspace.isRemoteTmuxMirror {
-            AppDelegate.shared?.remoteTmuxController.detachMirrorWorkspaceKeptOpenLocally(workspaceId: workspace.id)
+            if AppDelegate.shared?.remoteTmuxController.isLocalPrimaryMirrorWorkspace(workspaceId: workspace.id) == true {
+                AppDelegate.shared?.remoteTmuxController.handleWorkspaceClosed(workspaceId: workspace.id)
+            } else {
+                // Ordinary remote mirrors preserve the upstream detach-on-close policy.
+                AppDelegate.shared?.remoteTmuxController.detachMirrorWorkspaceKeptOpenLocally(workspaceId: workspace.id)
+            }
         }
         if recordHistory,
            workspace.isRestorableInSessionSnapshot,
@@ -2080,7 +2088,11 @@ class TabManager: ObservableObject {
 
         if tabs.isEmpty {
             // The UI assumes each window always has at least one workspace.
-            _ = addWorkspace()
+            if RemoteTmuxController.isLocalPrimaryEnabled {
+                AppDelegate.shared?.remoteTmuxController.startLocalPrimary(in: self, activate: false)
+            } else {
+                _ = addWorkspace()
+            }
             return removed
         }
 
@@ -2215,16 +2227,17 @@ class TabManager: ObservableObject {
         sidebarMultiSelection.replaceSelection(with: workspaceIds.intersection(existingIds))
     }
 
-    /// No-op: closing a remote-tmux mirror workspace/tab/window must DETACH from the
-    /// remote session, never kill it. Killing a live tmux session is only ever an
-    /// explicit disconnect action, never a side effect of closing a tab (PR #7264
-    /// review by the ssh-tmux author). This seam formerly set the window
-    /// kill-on-close marker so the close committed a `kill-session`; it is retained
-    /// as a no-op (still called from the last-workspace and batch/anchor close paths)
-    /// so those paths fall through to detach via `AppDelegate`'s window-close handlers
-    /// and the app-quit deferral gate stays empty. The marker machinery is left in
-    /// place for a future explicit "disconnect host" action.
-    func markRemoteTmuxKillOnWindowCloseIfNeeded(for workspaces: [Workspace]) {}
+    /// Marks an explicit close of the window's final local-primary workspace so
+    /// the close commit kills that localhost tmux session. Ordinary remote mirrors
+    /// retain their detach-on-close behavior.
+    func markRemoteTmuxKillOnWindowCloseIfNeeded(for workspaces: [Workspace]) {
+        guard let appDelegate = AppDelegate.shared,
+              workspaces.contains(where: {
+                  appDelegate.remoteTmuxController.isLocalPrimaryMirrorWorkspace(workspaceId: $0.id)
+              }),
+              let windowId = appDelegate.windowId(for: self) else { return }
+        appDelegate.remoteTmuxController.markKillSessionsOnWindowClose(windowId: windowId)
+    }
 
     func closeWorkspacesWithConfirmation(_ workspaceIds: [UUID], allowPinned: Bool) {
         let workspaces = orderedClosableWorkspaces(workspaceIds, allowPinned: allowPinned)
@@ -2245,9 +2258,9 @@ class TabManager: ObservableObject {
 
         if plan.workspaces.count == tabs.count,
            let firstWorkspace = plan.workspaces.first {
-            // Closing every tab routes through the window-close path, which DETACHES
-            // the remote-tmux session(s) (kept alive on the server for resume); the
-            // mark seam is a retained no-op (see markRemoteTmuxKillOnWindowCloseIfNeeded).
+            // Closing every tab routes through the window-close path. Local-primary
+            // mirrors are explicit tab/session closes and are killed; ordinary
+            // remote mirrors still detach and remain alive on their server.
             markRemoteTmuxKillOnWindowCloseIfNeeded(for: plan.workspaces)
             if let window {
                 window.performClose(nil)
@@ -2278,7 +2291,8 @@ class TabManager: ObservableObject {
                 // Anchor confirmed (or suppressed); skip the inner re-prompt
                 // by closing without going through closeWorkspaceIfRunningProcess.
                 if tabs.count <= 1 {
-                    // Mirror close detaches from the remote session (retained no-op).
+                    // Local-primary closes kill the corresponding localhost tmux
+                    // session; ordinary remote mirrors still detach.
                     markRemoteTmuxKillOnWindowCloseIfNeeded(for: [workspace])
                     if let window {
                         window.performClose(nil)
@@ -2523,11 +2537,10 @@ class TabManager: ObservableObject {
             return false
         }
         if tabs.count <= 1 {
-            // Last workspace in this window closes via the window-close path. For a
-            // remote-tmux mirror this DETACHES from the remote session (kept alive for
-            // resume); the mark seam is a retained no-op (see
-            // markRemoteTmuxKillOnWindowCloseIfNeeded). Non-last workspaces also detach
-            // via closeWorkspace.
+            // Last workspace in this window closes via the window-close path.
+            // Local-primary treats this as an explicit session close; ordinary
+            // remote mirrors still detach. Non-last workspaces follow the same
+            // distinction through `closeWorkspace`.
             markRemoteTmuxKillOnWindowCloseIfNeeded(for: [workspace])
             if let window {
                 window.performClose(nil)
@@ -3631,14 +3644,27 @@ class TabManager: ObservableObject {
 
     /// Create a new terminal surface in the focused pane of the selected workspace
     func newSurface() {
+        if routeNewSurfaceToLocalPrimaryIfNeeded(initialInput: nil) { return }
         // Cmd+T should always focus the newly created surface.
         selectedWorkspace?.clearSplitZoom()
         selectedWorkspace?.newTerminalSurfaceInFocusedPane(focus: true)
     }
 
     func newSurface(initialInput: String) {
+        if routeNewSurfaceToLocalPrimaryIfNeeded(initialInput: initialInput) { return }
         selectedWorkspace?.clearSplitZoom()
         selectedWorkspace?.newTerminalSurfaceInFocusedPane(focus: true, initialInput: initialInput)
+    }
+
+    private func routeNewSurfaceToLocalPrimaryIfNeeded(initialInput: String?) -> Bool {
+        guard RemoteTmuxController.isLocalPrimaryEnabled,
+              selectedWorkspace?.isRemoteTmuxMirror != true else { return false }
+        return AppDelegate.shared?.performNewLocalTmuxWorkspaceAction(
+            tabManager: self,
+            event: nil,
+            debugSource: "tabManager.newSurface.localTmux",
+            initialInput: initialInput
+        ) ?? false
     }
 
     // MARK: - Split Creation
@@ -3657,6 +3683,7 @@ class TabManager: ObservableObject {
     func createSplit(tabId: UUID, surfaceId: UUID, direction: SplitDirection, focus: Bool = true) -> UUID? {
         guard let tab = tabs.first(where: { $0.id == tabId }),
               tab.panels[surfaceId] != nil else { return nil }
+        guard !RemoteTmuxController.isLocalPrimaryEnabled || tab.isRemoteTmuxMirror else { return nil }
         tab.clearSplitZoom()
         sentryBreadcrumb("split.create", data: ["direction": String(describing: direction)])
         return newSplit(tabId: tabId, surfaceId: surfaceId, direction: direction, focus: focus)
@@ -4135,6 +4162,7 @@ class TabManager: ObservableObject {
 
     @discardableResult
     func restoreClosedWorkspace(_ entry: ClosedWorkspaceHistoryEntry) -> Bool {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
         let preRestoreFocus = currentFocusHistoryEntry
         let workspace = addWorkspace(
             title: entry.snapshot.customTitle ?? entry.snapshot.processTitle,

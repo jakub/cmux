@@ -65,6 +65,48 @@ actor RemoteTmuxSSHTransport {
         return RemoteTmuxSessionListParser.parse(result.stdout)
     }
 
+    /// Creates one detached tmux session and returns tmux's authoritative
+    /// stable id and normalized name from the command's formatted output.
+    func createSession(name: String?, workingDirectory: String?) async throws -> RemoteTmuxSession {
+        try await assertMinimumTmuxVersion(checkClientWhenNoServer: true)
+        let result = try await runTmux(Self.createSessionArguments(
+            name: name,
+            workingDirectory: workingDirectory
+        ))
+        guard result.succeeded else {
+            throw commandFailure(result)
+        }
+        guard let session = RemoteTmuxSessionListParser.parse(result.stdout).first else {
+            throw RemoteTmuxError.commandFailed(
+                exitCode: result.exitCode,
+                stderr: String(
+                    localized: "localTmux.primary.error.missingSessionIdentity",
+                    defaultValue: "tmux created a session without reporting its identity."
+                )
+            )
+        }
+        return session
+    }
+
+    /// Builds the argument vector for authoritative detached-session creation.
+    static func createSessionArguments(name: String?, workingDirectory: String?) -> [String] {
+        var arguments = [
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            RemoteTmuxSessionListParser.formatString,
+        ]
+        if let name = name.flatMap(RemoteTmuxHost.controlModeCommandName) {
+            arguments += ["-s", name]
+        }
+        if let workingDirectory = workingDirectory?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !workingDirectory.isEmpty {
+            arguments += ["-c", workingDirectory]
+        }
+        return arguments
+    }
+
     /// Probes the remote tmux client version via `tmux -V`.
     ///
     /// - Returns: the parsed version, or `nil` when `tmux -V` succeeds but its

@@ -387,6 +387,8 @@ extension ControlCommandCoordinator {
             return .err(code: "not_found", message: "No focused surface", data: nil)
         case .createFailed:
             return .err(code: "internal_error", message: "Failed to create split", data: nil)
+        case .localTmuxRequiresMirroredWorkspace(let message):
+            return .err(code: "unsupported_in_local_tmux", message: message, data: nil)
         case .mirrorUnsupportedOptions(let unsupported):
             return mirrorUnsupportedOptionsResult(unsupported)
         case .routedToRemote(let windowID, let workspaceID, let typeRawValue):
@@ -539,6 +541,8 @@ extension ControlCommandCoordinator {
             return .err(code: "not_found", message: "Pane not found", data: nil)
         case .createFailed:
             return .err(code: "internal_error", message: "Failed to create surface", data: nil)
+        case .localTmuxRequiresMirroredWorkspace(let message):
+            return .err(code: "unsupported_in_local_tmux", message: message, data: nil)
         case .mirrorUnsupportedOptions(let unsupported):
             return mirrorUnsupportedOptionsResult(unsupported)
         case .routedToRemote(let windowID, let workspaceID, let typeRawValue):

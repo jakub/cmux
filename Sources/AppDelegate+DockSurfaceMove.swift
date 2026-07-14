@@ -241,6 +241,10 @@ extension AppDelegate {
         // A window Dock resolves its owning window; a Workspace Dock resolves
         // that workspace's window (see `dockReferenceTabManager`).
         guard let manager = dockReferenceTabManager(for: sourceDock) else { return false }
+        if RemoteTmuxController.isLocalPrimaryEnabled,
+           sourceDock.panels[panelId] is TerminalPanel {
+            return false
+        }
         let sourcePane = sourceDock.paneId(forPanelId: panelId)
         guard let detached = sourceDock.detachSurface(panelId: panelId) else { return false }
         (detached.panel as? TerminalPanel)?.surface.setFocusPlacement(.workspace)

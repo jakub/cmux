@@ -30,6 +30,9 @@ extension TabManager {
         insertionIndexOverride: Int? = nil,
         focusIntent: PanelFocusIntent? = nil
     ) -> Workspace? {
+        if RemoteTmuxController.isLocalPrimaryEnabled, detached.panel is TerminalPanel {
+            return nil
+        }
         let sourceWorkspace = selectedWorkspace
         let capturedTabs = tabs
         let capturedSelectedTabId = sourceWorkspace?.id

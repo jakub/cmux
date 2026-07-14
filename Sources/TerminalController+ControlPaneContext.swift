@@ -651,6 +651,10 @@ extension TerminalController: ControlPaneContext {
         guard sourceWorkspace.panels[surfaceId] != nil else {
             return .surfaceNotFound(surfaceId)
         }
+        if RemoteTmuxController.isLocalPrimaryEnabled,
+           sourceWorkspace.panels[surfaceId] is TerminalPanel {
+            return .createWorkspaceFailed
+        }
         let sourceIndex = sourceWorkspace.indexInPane(forPanelId: surfaceId)
         let sourcePaneForRollback = sourceWorkspace.paneId(forPanelId: surfaceId)
 

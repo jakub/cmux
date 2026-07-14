@@ -42,6 +42,10 @@ private enum AppleScriptStrings {
         localized: "applescript.error.failedToCreateWorkspace",
         defaultValue: "Failed to create workspace."
     )
+    static let localTmuxWorkspaceCreateUnsupported = String(
+        localized: "applescript.error.localTmuxWorkspaceCreateUnsupported",
+        defaultValue: "AppleScript workspace creation is unavailable while local tmux workspaces are enabled."
+    )
     static let failedToCreateSplit = String(
         localized: "applescript.error.failedToCreateSplit",
         defaultValue: "Failed to create split."
@@ -190,7 +194,9 @@ extension NSApplication {
             return nil
         }
 
-        let windowId = appDelegate.createMainWindow()
+        let windowId = RemoteTmuxController.isLocalPrimaryEnabled
+            ? appDelegate.ensureInitialMainWindowIfNeeded()
+            : appDelegate.createMainWindow()
         return ScriptWindow(windowId: windowId)
     }
 
@@ -201,6 +207,11 @@ extension NSApplication {
         guard let appDelegate = AppDelegate.shared else {
             command.scriptErrorNumber = errAEEventFailed
             command.scriptErrorString = AppleScriptStrings.failedToCreateWorkspace
+            return nil
+        }
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else {
+            command.scriptErrorNumber = errAEEventNotHandled
+            command.scriptErrorString = AppleScriptStrings.localTmuxWorkspaceCreateUnsupported
             return nil
         }
 

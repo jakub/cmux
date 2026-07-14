@@ -96,6 +96,11 @@ extension ContentView {
                     paneId: paneId
                 ) != nil
             case .newWorkspace:
+                guard !RemoteTmuxController.isLocalPrimaryEnabled else {
+                    clearCommandPaletteForkableAgentCache(panelKey: panelKey)
+                    NSSound.beep()
+                    return
+                }
                 guard let launch = currentContext.workspace.forkAgentWorkspaceLaunch(
                     fromPanelId: panelId,
                     snapshot: snapshot

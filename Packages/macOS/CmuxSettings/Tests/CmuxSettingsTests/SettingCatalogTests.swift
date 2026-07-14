@@ -106,4 +106,12 @@ struct SettingCatalogTests {
         #expect(catalog.paneChrome.paneBorderColorHex.id == "paneBorderColor")
         #expect(catalog.paneChrome.activePaneBorderColorHex.id == "activePaneBorderColor")
     }
+
+    @Test func localTmuxPrimaryIsAnOptInUserDefaultsSetting() {
+        let key = SettingCatalog().betaFeatures.localTmuxPrimary
+
+        #expect(key.id == "localTmux.primary.enabled")
+        #expect(key.userDefaultsKey == "localTmux.primary.enabled")
+        #expect(key.defaultValue == false)
+    }
 }

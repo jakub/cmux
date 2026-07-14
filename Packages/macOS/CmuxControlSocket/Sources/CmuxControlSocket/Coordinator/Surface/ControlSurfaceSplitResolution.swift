@@ -29,6 +29,9 @@ public enum ControlSurfaceSplitResolution: Sendable, Equatable {
     /// The split creation failed (legacy `internal_error` / "Failed to create
     /// split").
     case createFailed
+    /// Local-primary mode rejected a terminal outside a tmux-backed workspace.
+    /// Carries the app-bundle-localized user-facing explanation.
+    case localTmuxRequiresMirroredWorkspace(String)
     /// The request carried options the routed remote tmux `split-window`
     /// cannot honor; rejected BEFORE the remote session was mutated (an error
     /// after the mutation invites retries that duplicate remote panes).

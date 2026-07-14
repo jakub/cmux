@@ -31,6 +31,85 @@ struct RemoteTmuxMirrorTargetingTests {
         controller.cacheConnection(RemoteTmuxControlConnection(host: host, sessionName: sessionName))
     }
 
+    @Test func localPrimaryEnablesTheRemoteTmuxEngineWithoutChangingRemotePreference() throws {
+        let suiteName = "RemoteTmuxMirrorTargetingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let betaFeatures = SettingCatalog().betaFeatures
+
+        #expect(!RemoteTmuxController.isEnabled(defaults: defaults))
+        #expect(!RemoteTmuxController.isLocalPrimaryEnabled(defaults: defaults))
+
+        betaFeatures.localTmuxPrimary.set(true, in: defaults)
+
+        #expect(RemoteTmuxController.isEnabled(defaults: defaults))
+        #expect(RemoteTmuxController.isLocalPrimaryEnabled(defaults: defaults))
+        #expect(!betaFeatures.remoteTmux.value(in: defaults))
+    }
+
+    @Test func taggedDevelopmentBuildSeedsLocalPrimaryAsTheDefault() throws {
+        let suiteName = "RemoteTmuxMirrorTargetingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let key = SettingCatalog().betaFeatures.localTmuxPrimary
+
+        RemoteTmuxController.seedLocalPrimaryDevelopmentDefaultIfNeeded(
+            defaults: defaults,
+            environment: [:]
+        )
+        #expect(!key.value(in: defaults))
+        RemoteTmuxController.seedLocalPrimaryDevelopmentDefaultIfNeeded(
+            defaults: defaults,
+            environment: ["CMUX_TAG": "default"]
+        )
+        #expect(!key.value(in: defaults))
+
+        RemoteTmuxController.seedLocalPrimaryDevelopmentDefaultIfNeeded(
+            defaults: defaults,
+            environment: ["CMUX_TAG": "local-tmux-primary"]
+        )
+
+        #expect(key.value(in: defaults))
+        key.set(false, in: defaults)
+        RemoteTmuxController.seedLocalPrimaryDevelopmentDefaultIfNeeded(
+            defaults: defaults,
+            environment: ["CMUX_TAG": "local-tmux-primary"]
+        )
+        #expect(!key.value(in: defaults))
+    }
+
+    @Test func localPrimaryMirrorStartsWithoutAnyNativeTerminalSurface() throws {
+        let controller = RemoteTmuxController(localPrimaryEnabled: true)
+        let manager = TabManager(createInitialWorkspace: false)
+        let host = RemoteTmuxController.localPrimaryHost
+        cacheConnection(controller: controller, host: host, sessionName: "0")
+
+        #expect(manager.tabs.isEmpty)
+        #expect(try controller.mirrorSession(
+            host: host,
+            sessionName: "0",
+            sessionId: 0,
+            into: manager
+        ))
+
+        let workspace = try #require(manager.tabs.first)
+        #expect(workspace.isRemoteTmuxMirror)
+        #expect(workspace.panels.isEmpty)
+        #expect(workspace.bonsplitController.allTabIds.isEmpty)
+    }
+
+    @Test func remotePreferenceStillEnablesTheEngineWithoutLocalPrimaryMode() throws {
+        let suiteName = "RemoteTmuxMirrorTargetingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let betaFeatures = SettingCatalog().betaFeatures
+
+        betaFeatures.remoteTmux.set(true, in: defaults)
+
+        #expect(RemoteTmuxController.isEnabled(defaults: defaults))
+        #expect(!RemoteTmuxController.isLocalPrimaryEnabled(defaults: defaults))
+    }
+
     @Test func unmirroredSessionsFiltersAlreadyMirroredNamesForHost() throws {
         let controller = RemoteTmuxController()
         let manager = TabManager()

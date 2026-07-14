@@ -14,6 +14,17 @@ enum SessionEntryResumeCoordinator {
         let inputWithReturn = resumeCommand + "\n"
         let targetCwd = entry.resumeWorkingDirectory
 
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            _ = AppDelegate.shared?.performNewLocalTmuxWorkspaceAction(
+                tabManager: tabManager,
+                event: nil,
+                debugSource: "sessionIndex.resume",
+                workingDirectory: targetCwd,
+                initialInput: inputWithReturn
+            )
+            return
+        }
+
         let selected = tabManager.selectedWorkspace
         let selectedTab = tabManager.selectedTabId.flatMap { id in
             tabManager.tabs.first(where: { $0.id == id })

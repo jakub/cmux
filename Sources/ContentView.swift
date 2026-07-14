@@ -2469,7 +2469,14 @@ struct ContentView: View {
 
                 // Ensure there is at least one workspace.
                 if tabManager.tabs.isEmpty {
-                    tabManager.addWorkspace()
+                    if RemoteTmuxController.isLocalPrimaryEnabled {
+                        AppDelegate.shared?.remoteTmuxController.startLocalPrimary(
+                            in: tabManager,
+                            activate: false
+                        )
+                    } else {
+                        tabManager.addWorkspace()
+                    }
                     didRecover = true
                 }
 
@@ -7522,7 +7529,16 @@ struct ContentView: View {
                 panel.title = String(localized: "panel.openFolder.title", defaultValue: "Open Folder")
                 panel.prompt = String(localized: "panel.openFolder.prompt", defaultValue: "Open")
                 if panel.runModal() == .OK, let url = panel.url {
-                    tabManager.addWorkspace(workingDirectory: url.path)
+                    if RemoteTmuxController.isLocalPrimaryEnabled {
+                        _ = AppDelegate.shared?.performNewLocalTmuxWorkspaceAction(
+                            tabManager: tabManager,
+                            event: nil,
+                            debugSource: "palette.openFolder",
+                            workingDirectory: url.path
+                        )
+                    } else {
+                        tabManager.addWorkspace(workingDirectory: url.path)
+                    }
                 }
             }
         }
@@ -10894,6 +10910,15 @@ struct VerticalTabsSidebar: View {
     ) -> CmuxSidebarActionResult {
         switch action {
         case .createWorkspace(let title, let workingDirectory, let select):
+            if RemoteTmuxController.isLocalPrimaryEnabled {
+                return CmuxSidebarActionResult(
+                    accepted: false,
+                    message: String(
+                        localized: "sidebar.extensions.action.localTmuxWorkspaceCreateUnsupported",
+                        defaultValue: "Synchronous extension workspace creation is unavailable while local tmux workspaces are enabled."
+                    )
+                )
+            }
             let workspace = tabManager.addWorkspace(
                 title: title,
                 workingDirectory: workingDirectory,
@@ -11638,15 +11663,26 @@ struct VerticalTabsSidebar: View {
             do {
                 let result = try await CmuxExtensionWorktreePrototype.createWorktree(projectRootPath: projectRootPath)
                 let spawnArgs = result.workspaceSpawnArgs()
-                tabManager.addWorkspace(
-                    title: spawnArgs.title,
-                    workingDirectory: spawnArgs.workingDirectory,
-                    initialTerminalInput: spawnArgs.initialTerminalInput,
-                    inheritWorkingDirectory: spawnArgs.inheritWorkingDirectory,
-                    select: true,
-                    eagerLoadTerminal: false,
-                    autoWelcomeIfNeeded: spawnArgs.initialTerminalInput == nil
-                )
+                if RemoteTmuxController.isLocalPrimaryEnabled {
+                    _ = AppDelegate.shared?.performNewLocalTmuxWorkspaceAction(
+                        tabManager: tabManager,
+                        event: nil,
+                        debugSource: "extensionSidebar.worktree",
+                        title: spawnArgs.title,
+                        workingDirectory: spawnArgs.workingDirectory,
+                        initialInput: spawnArgs.initialTerminalInput
+                    )
+                } else {
+                    tabManager.addWorkspace(
+                        title: spawnArgs.title,
+                        workingDirectory: spawnArgs.workingDirectory,
+                        initialTerminalInput: spawnArgs.initialTerminalInput,
+                        inheritWorkingDirectory: spawnArgs.inheritWorkingDirectory,
+                        select: true,
+                        eagerLoadTerminal: false,
+                        autoWelcomeIfNeeded: spawnArgs.initialTerminalInput == nil
+                    )
+                }
             } catch {
                 NSSound.beep()
 #if DEBUG
@@ -12897,7 +12933,8 @@ private struct SidebarEmptyArea: View {
                 // be polluted with a dragged-in local workspace (move targets don't
                 // exclude dedicated windows), and `contains` would then misroute a
                 // local empty-area double-tap into spawning an unwanted tmux session.
-                if tabManager.selectedTab?.isRemoteTmuxMirror == true {
+                if RemoteTmuxController.isLocalPrimaryEnabled
+                    || tabManager.selectedTab?.isRemoteTmuxMirror == true {
                     _ = AppDelegate.shared?.performNewWorkspaceAction(
                         tabManager: tabManager,
                         debugSource: "sidebar.emptyArea.remoteTmux"

@@ -22,6 +22,40 @@ import Testing
 /// directories leave the placement-only command so a missing cwd can never break
 /// the control stream.
 @Suite struct RemoteTmuxNewWindowCwdTests {
+    @Test func detachedSessionCreationRequestsAuthoritativeIdentityAndCwd() {
+        let arguments = RemoteTmuxSSHTransport.createSessionArguments(
+            name: "my project",
+            workingDirectory: "/Users/me/My Project"
+        )
+
+        #expect(arguments == [
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            RemoteTmuxSessionListParser.formatString,
+            "-s",
+            "my project",
+            "-c",
+            "/Users/me/My Project",
+        ])
+    }
+
+    @Test func detachedSessionCreationLetsTmuxChooseAName() {
+        let arguments = RemoteTmuxSSHTransport.createSessionArguments(
+            name: nil,
+            workingDirectory: "  "
+        )
+
+        #expect(arguments == [
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            RemoteTmuxSessionListParser.formatString,
+        ])
+    }
+
     @Test func seedsStartingDirectoryAfterSelectedWindow() {
         #expect(
             RemoteTmuxController.newWindowCommand(afterWindowId: 7, workingDirectory: "/Users/me/proj")

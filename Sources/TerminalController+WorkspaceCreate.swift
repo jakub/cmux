@@ -2,6 +2,135 @@ import CmuxSettings
 import Foundation
 
 extension TerminalController {
+    /// Shared terminal-workspace creation entrypoint. Native mode retains the
+    /// existing synchronous body; local-primary mode creates a tmux session and
+    /// waits for its mirror so every caller receives authoritative workspace and
+    /// surface ids instead of observing an optimistic native placeholder.
+    @MainActor
+    func v2WorkspaceCreateForCurrentMode(
+        params: [String: Any],
+        tabManager resolvedTabManager: TabManager? = nil
+    ) async -> V2CallResult {
+        guard RemoteTmuxController.isLocalPrimaryEnabled else {
+            return v2WorkspaceCreate(params: params, tabManager: resolvedTabManager)
+        }
+        guard let tabManager = resolvedTabManager ?? v2ResolveTabManager(params: params) else {
+            return .err(
+                code: "unavailable",
+                message: String(
+                    localized: "localTmux.primary.error.tabManagerUnavailable",
+                    defaultValue: "TabManager not available"
+                ),
+                data: nil
+            )
+        }
+
+        let unsupportedKeys = [
+            "initial_command",
+            "initial_env",
+            "workspace_env",
+            "layout",
+            "group_id",
+            "group_placement",
+            "placement",
+            "group_reference_workspace_id",
+            "reference_workspace_id",
+        ]
+        if let unsupportedKey = unsupportedKeys.first(where: { v2HasNonNullParam(params, $0) }) {
+            return .err(
+                code: "unsupported_in_local_tmux",
+                message: String.localizedStringWithFormat(
+                    String(
+                        localized: "localTmux.primary.error.unsupportedParameter",
+                        defaultValue: "%@ is not supported while local tmux workspaces are enabled."
+                    ),
+                    unsupportedKey
+                ),
+                data: ["unsupported_param": unsupportedKey]
+            )
+        }
+
+        let requestedWorkingDirectory = v2RawString(params, "working_directory")?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let workingDirectory: String?
+        if requestedWorkingDirectory?.isEmpty == false {
+            workingDirectory = requestedWorkingDirectory
+        } else if let raw = params["cwd"] {
+            guard let value = raw as? String else {
+                return .err(
+                    code: "invalid_params",
+                    message: String(
+                        localized: "localTmux.primary.error.invalidCwdType",
+                        defaultValue: "cwd must be a string"
+                    ),
+                    data: nil
+                )
+            }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            workingDirectory = trimmed.isEmpty ? nil : trimmed
+        } else {
+            workingDirectory = nil
+        }
+
+        let requestedTitle = v2RawString(params, "title")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = requestedTitle?.isEmpty == false ? requestedTitle : nil
+        let description = v2RawString(params, "description")
+        let shouldFocus = v2FocusAllowed(requested: v2Bool(params, "focus") ?? false)
+
+        guard let controller = AppDelegate.shared?.remoteTmuxController else {
+            return .err(
+                code: "unavailable",
+                message: String(
+                    localized: "localTmux.primary.error.controllerUnavailable",
+                    defaultValue: "The local tmux controller is unavailable."
+                ),
+                data: nil
+            )
+        }
+        do {
+            let workspaceId = try await controller.createLocalPrimaryWorkspace(
+                in: tabManager,
+                title: title,
+                workingDirectory: workingDirectory,
+                select: shouldFocus
+            )
+            guard let workspace = tabManager.tabs.first(where: { $0.id == workspaceId }) else {
+                return .err(
+                    code: "internal_error",
+                    message: String(
+                        localized: "localTmux.primary.error.mirrorResolution",
+                        defaultValue: "cmux could not resolve the mirrored tmux workspace."
+                    ),
+                    data: nil
+                )
+            }
+            workspace.setCustomDescription(description)
+            let windowId = v2ResolveWindowId(tabManager: tabManager)
+            let surfaceId = workspace.focusedPanelId
+            return .ok([
+                "window_id": v2OrNull(windowId?.uuidString),
+                "window_ref": v2Ref(kind: .window, uuid: windowId),
+                "workspace_id": workspaceId.uuidString,
+                "workspace_ref": v2Ref(kind: .workspace, uuid: workspaceId),
+                "group_id": NSNull(),
+                "group_ref": NSNull(),
+                "surface_id": v2OrNull(surfaceId?.uuidString),
+                "surface_ref": v2Ref(kind: .surface, uuid: surfaceId),
+            ])
+        } catch is CancellationError {
+            return .err(
+                code: "cancelled",
+                message: String(
+                    localized: "localTmux.primary.error.cancelled",
+                    defaultValue: "Local tmux workspace creation was cancelled."
+                ),
+                data: nil
+            )
+        } catch {
+            return .err(code: "local_tmux_error", message: error.localizedDescription, data: nil)
+        }
+    }
+
     // Shared workspace-create implementation: the workspace.create command moved
     // to ControlCommandCoordinator, but v2MobileWorkspaceCreate still drives
     // this body for the mobile data-plane create path.
@@ -244,7 +373,7 @@ extension TerminalController {
         ])
     }
 
-    func v2MobileWorkspaceCreate(params: [String: Any]) -> V2CallResult {
+    func v2MobileWorkspaceCreate(params: [String: Any]) async -> V2CallResult {
         guard let tabManager = v2ResolveTabManager(params: params) else {
             return .err(code: "unavailable", message: "Workspace context is unavailable", data: nil)
         }
@@ -252,7 +381,10 @@ extension TerminalController {
         createParams["focus"] = false
         createParams["eager_load_terminal"] = false
         createParams["auto_refresh_metadata"] = false
-        let createResult = v2WorkspaceCreate(params: createParams, tabManager: tabManager)
+        let createResult = await v2WorkspaceCreateForCurrentMode(
+            params: createParams,
+            tabManager: tabManager
+        )
         switch createResult {
         case let .ok(payload):
             let createdWorkspaceID = (payload as? [String: Any])?["workspace_id"] as? String

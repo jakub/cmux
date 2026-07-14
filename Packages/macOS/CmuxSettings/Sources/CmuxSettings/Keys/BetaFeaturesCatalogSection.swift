@@ -60,5 +60,15 @@ public struct BetaFeaturesCatalogSection: SettingCatalogSection {
         userDefaultsKey: "remoteTmux.beta.enabled"
     )
 
+    /// Local tmux primary mode: use tmux sessions reached through localhost
+    /// SSH as the backing store for terminal workspaces. Defaults off so the
+    /// existing native workspace lifecycle remains unchanged unless the user
+    /// explicitly opts into the experimental mode.
+    public let localTmuxPrimary = DefaultsKey<Bool>(
+        id: "localTmux.primary.enabled",
+        defaultValue: false,
+        userDefaultsKey: "localTmux.primary.enabled"
+    )
+
     public init() {}
 }

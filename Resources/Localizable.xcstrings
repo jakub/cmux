@@ -18165,6 +18165,23 @@
         }
       }
     },
+    "applescript.error.localTmuxWorkspaceCreateUnsupported": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "AppleScript workspace creation is unavailable while local tmux workspaces are enabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペースが有効な間、AppleScript によるワークスペース作成は利用できません。"
+          }
+        }
+      }
+    },
     "applescript.error.missingAction": {
       "extractionState": "manual",
       "localizations": {
@@ -133205,6 +133222,23 @@
         }
       }
     },
+    "remoteTmux.workspace.defaultTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tmux"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tmux"
+          }
+        }
+      }
+    },
     "remoteTmux.tab.window": {
       "extractionState": "manual",
       "localizations": {
@@ -153168,6 +153202,329 @@
           "stringUnit": {
             "state": "translated",
             "value": "Feed を右サイドバーのモード切り替えに表示し、エージェントの判断をインラインで扱えるようにします。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.cancelled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local tmux workspace creation was cancelled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペースの作成がキャンセルされました。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.controllerUnavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The local tmux controller is unavailable."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux コントローラを利用できません。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.disabled": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local tmux primary mode is disabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux プライマリモードは無効です。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.invalidCwdType": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cwd must be a string"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cwd は文字列である必要があります。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.legacyWorkspaceCreate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "new_workspace is unavailable while local tmux workspaces are enabled; use workspace.create."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペースが有効な間、new_workspace は利用できません。workspace.create を使用してください。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.mirrorCreatedSession": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The tmux session was created but could not be mirrored."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tmux セッションは作成されましたが、ミラーリングできませんでした。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.missingSessionIdentity": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tmux created a session without reporting its identity."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "tmux はセッションを作成しましたが、その識別情報を返しませんでした。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.mirrorResolution": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cmux could not resolve the mirrored tmux workspace."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ミラーリングされた tmux ワークスペースを解決できませんでした。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.noMirror": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cmux could not mirror any localhost tmux session."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "localhost の tmux セッションをミラーリングできませんでした。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.tabManagerUnavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TabManager not available"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TabManager を利用できません。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.nativeTerminalSurface": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminal surfaces can only be created in a tmux-backed workspace while local tmux workspaces are enabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペースが有効な間、ターミナルサーフェスは tmux がバックエンドのワークスペース内でのみ作成できます。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.unsupportedParameter": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is not supported while local tmux workspaces are enabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペースが有効な間、%@ はサポートされません。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.workspaceCreateOffMain": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "workspace.create must run off the main thread while local tmux workspaces are enabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペースが有効な間、workspace.create はメインスレッド以外で実行する必要があります。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.error.workspaceGroupCreate": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Workspace-group creation is unavailable while local tmux workspaces are enabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペースが有効な間、ワークスペースグループの作成は利用できません。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.failure.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cmux could not create or mirror a localhost tmux session. Native terminal fallback is disabled while this beta is enabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "localhost の tmux セッションを作成またはミラーリングできませんでした。このベータ機能が有効な間は、ネイティブターミナルへのフォールバックは無効です。"
+          }
+        }
+      }
+    },
+    "localTmux.primary.failure.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local tmux is unavailable"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux を利用できません"
+          }
+        }
+      }
+    },
+    "settings.betaFeatures.localTmuxPrimary": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Local tmux workspaces"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペース"
+          }
+        }
+      }
+    },
+    "settings.betaFeatures.localTmuxPrimary.subtitleOff": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uses cmux's native terminal workspaces. Restart cmux after changing this setting."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "cmux のネイティブターミナルワークスペースを使用します。この設定を変更した後は cmux を再起動してください。"
+          }
+        }
+      }
+    },
+    "settings.betaFeatures.localTmuxPrimary.subtitleOn": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uses localhost tmux sessions as terminal workspaces. New workspaces create tmux sessions; closing cmux leaves them running. Restart cmux after changing this setting."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "localhost の tmux セッションをターミナルワークスペースとして使用します。新しいワークスペースを作成すると tmux セッションが作成され、cmux を終了しても実行を続けます。この設定を変更した後は cmux を再起動してください。"
           }
         }
       }
@@ -197822,6 +198179,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "URLを開けませんでした"
+          }
+        }
+      }
+    },
+    "sidebar.extensions.action.localTmuxWorkspaceCreateUnsupported": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synchronous extension workspace creation is unavailable while local tmux workspaces are enabled."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux ワークスペースが有効な間、同期的な拡張機能ワークスペース作成は利用できません。"
           }
         }
       }

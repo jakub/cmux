@@ -119,6 +119,45 @@ struct ControlCommandCoordinatorSurfaceTests {
         #expect(data == .object(["type": .string("agentSession")]))
     }
 
+    @Test func localTmuxSurfaceCreateFailureIsExplicit() {
+        let message = "terminal must belong to a tmux mirror"
+        let (coordinator, context) = coordinator(
+            createResolution: .localTmuxRequiresMirroredWorkspace(message)
+        )
+        _ = context
+
+        let result = coordinator.handle(ControlRequest(
+            id: .int(1),
+            method: "surface.create",
+            params: [:]
+        ))
+
+        #expect(result == .err(
+            code: "unsupported_in_local_tmux",
+            message: message,
+            data: nil
+        ))
+    }
+
+    @Test func localTmuxSurfaceSplitFailureIsExplicit() {
+        let message = "terminal must belong to a tmux mirror"
+        let context = FakeSurfaceControlCommandContext()
+        context.splitResolution = .localTmuxRequiresMirroredWorkspace(message)
+        let coordinator = ControlCommandCoordinator(context: context)
+
+        let result = coordinator.handle(ControlRequest(
+            id: .int(1),
+            method: "surface.split",
+            params: ["direction": .string("right")]
+        ))
+
+        #expect(result == .err(
+            code: "unsupported_in_local_tmux",
+            message: message,
+            data: nil
+        ))
+    }
+
     @Test func paneCreateDockUnsupportedTypeReturnsInvalidParams() throws {
         let context = FakeSurfaceControlCommandContext()
         context.paneCreateResolution = .dockUnsupportedType(

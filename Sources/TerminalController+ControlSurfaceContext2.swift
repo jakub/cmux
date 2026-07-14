@@ -113,6 +113,11 @@ extension TerminalController {
         guard let targetSurfaceId, ws.panels[targetSurfaceId] != nil else {
             return .noFocusedSurface
         }
+        if RemoteTmuxController.isLocalPrimaryEnabled,
+           panelType == .terminal,
+           !ws.isRemoteTmuxMirror {
+            return .localTmuxRequiresMirroredWorkspace(localTmuxNativeTerminalSurfaceMessage())
+        }
 
         if ws.isRemoteTmuxMirror, panelType == .terminal {
             let unsupported = mirrorRoutedUnsupportedOptions(
@@ -320,6 +325,9 @@ extension TerminalController {
         }
 
         if case .dock = placement {
+            if RemoteTmuxController.isLocalPrimaryEnabled, panelType == .terminal {
+                return .localTmuxRequiresMirroredWorkspace(localTmuxNativeTerminalSurfaceMessage())
+            }
             return dockSurfaceCreate(
                 routing: routing,
                 tabManager: tabManager,
@@ -346,6 +354,11 @@ extension TerminalController {
         }()
         guard let paneId else {
             return .paneNotFound
+        }
+        if RemoteTmuxController.isLocalPrimaryEnabled,
+           panelType == .terminal,
+           !ws.isRemoteTmuxMirror {
+            return .localTmuxRequiresMirroredWorkspace(localTmuxNativeTerminalSurfaceMessage())
         }
 
         if ws.isRemoteTmuxMirror, panelType == .terminal {
@@ -415,6 +428,13 @@ extension TerminalController {
             paneID: paneId.id,
             surfaceID: newPanelId,
             typeRawValue: panelType.rawValue
+        )
+    }
+
+    private func localTmuxNativeTerminalSurfaceMessage() -> String {
+        String(
+            localized: "localTmux.primary.error.nativeTerminalSurface",
+            defaultValue: "Terminal surfaces can only be created in a tmux-backed workspace while local tmux workspaces are enabled."
         )
     }
 

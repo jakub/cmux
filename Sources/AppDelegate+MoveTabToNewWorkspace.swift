@@ -15,9 +15,10 @@ extension AppDelegate {
     func canMoveSurfaceToNewWorkspace(panelId: UUID) -> Bool {
         guard let source = locateSurface(surfaceId: panelId),
               let sourceWorkspace = source.tabManager.tabs.first(where: { $0.id == source.workspaceId }),
-              sourceWorkspace.panels[panelId] != nil else {
+              let panel = sourceWorkspace.panels[panelId] else {
             return false
         }
+        if RemoteTmuxController.isLocalPrimaryEnabled, panel is TerminalPanel { return false }
         return sourceWorkspace.panels.count > 1
     }
 
@@ -89,6 +90,9 @@ extension AppDelegate {
               let sourceWorkspace = source.tabManager.tabs.first(where: { $0.id == source.workspaceId }),
               let sourcePanel = sourceWorkspace.panels[panelId],
               sourceWorkspace.panels.count > 1 else {
+            return nil
+        }
+        guard !RemoteTmuxController.isLocalPrimaryEnabled || !(sourcePanel is TerminalPanel) else {
             return nil
         }
 

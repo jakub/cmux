@@ -3,7 +3,9 @@
 /// `.terminal` is the historical default. `.browser` backs the
 /// "New Browser Workspace" action: identical placement and naming
 /// semantics, but the initial surface is a browser pane in its
-/// default new-tab state instead of a terminal.
+/// default new-tab state instead of a terminal. `.remoteTmux` creates the
+/// workspace shell without a native process so the remote-tmux projection can
+/// populate it exclusively with manual-I/O surfaces.
 public enum NewWorkspaceInitialSurface: Sendable {
     /// The historical default: a terminal surface.
     case terminal
@@ -11,4 +13,6 @@ public enum NewWorkspaceInitialSurface: Sendable {
     case browser
     /// A transient Cloud VM loading surface. It is swapped for a terminal once attach is ready.
     case cloudVMLoading
+    /// An initially empty workspace populated by a remote-tmux session mirror.
+    case remoteTmux
 }

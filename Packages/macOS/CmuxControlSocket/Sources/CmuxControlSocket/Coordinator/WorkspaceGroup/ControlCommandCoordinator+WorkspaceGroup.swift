@@ -168,6 +168,8 @@ extension ControlCommandCoordinator {
             )
         case .notCreated:
             return .err(code: "not_created", message: "Group was not created", data: nil)
+        case .unsupported(let message):
+            return .err(code: "unsupported_in_local_tmux", message: message, data: nil)
         case .created(let group):
             return .ok(.object(["group": workspaceGroupPayload(group)]))
         }
@@ -360,6 +362,8 @@ extension ControlCommandCoordinator {
             )
         case .notFound:
             return .err(code: "not_found", message: "Group not found", data: .object(["group_id": .string(gid.uuidString)]))
+        case .unsupported(let message):
+            return .err(code: "unsupported_in_local_tmux", message: message, data: nil)
         case .created(let workspaceID):
             return .ok(.object([
                 "group_id": .string(gid.uuidString),

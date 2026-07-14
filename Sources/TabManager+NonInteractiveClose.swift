@@ -18,7 +18,11 @@ extension TabManager {
               let windowId = appDelegate.windowId(for: self),
               appDelegate.mainWindow(for: windowId) != nil else { return false }
         if workspace.isRemoteTmuxMirror {
-            appDelegate.remoteTmuxController.detachMirrorWorkspaceKeptOpenLocally(workspaceId: workspace.id)
+            if appDelegate.remoteTmuxController.isLocalPrimaryMirrorWorkspace(workspaceId: workspace.id) {
+                appDelegate.remoteTmuxController.handleWorkspaceClosed(workspaceId: workspace.id)
+            } else {
+                appDelegate.remoteTmuxController.detachMirrorWorkspaceKeptOpenLocally(workspaceId: workspace.id)
+            }
         }
         return appDelegate.closeMainWindow(windowId: windowId, recordHistory: recordHistory)
     }

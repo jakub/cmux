@@ -1350,6 +1350,28 @@ class TerminalController {
             return v2AsyncResultCall(id: request.id, timeoutSeconds: 30) {
                 await self.v2MobileAttachTicketCreate(params: request.params)
             }
+        case "workspace.create":
+            if Thread.isMainThread {
+                if RemoteTmuxController.isLocalPrimaryEnabled {
+                    return v2Error(
+                        id: request.id,
+                        code: "invalid_dispatch",
+                        message: String(
+                            localized: "localTmux.primary.error.workspaceCreateOffMain",
+                            defaultValue: "workspace.create must run off the main thread while local tmux workspaces are enabled."
+                        )
+                    )
+                }
+                return v2MainSync {
+                    self.v2Result(
+                        id: request.id,
+                        self.v2WorkspaceCreate(params: request.params)
+                    )
+                }
+            }
+            return v2AsyncResultCall(id: request.id, timeoutSeconds: 60) {
+                await self.v2WorkspaceCreateForCurrentMode(params: request.params)
+            }
         case "mobile.terminal.set_font":
             return v2Result(id: request.id, v2MobileTerminalSetFont(params: request.params))
         case "system.ping":
@@ -11911,6 +11933,12 @@ class TerminalController {
 
     private func newWorkspace(_ args: String = "") -> String {
         guard let tabManager = tabManager else { return "ERROR: TabManager not available" }
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            return "ERROR: " + String(
+                localized: "localTmux.primary.error.legacyWorkspaceCreate",
+                defaultValue: "new_workspace is unavailable while local tmux workspaces are enabled; use workspace.create."
+            )
+        }
 
         let trimmed = args.trimmingCharacters(in: .whitespacesAndNewlines)
         let title: String? = trimmed.isEmpty ? nil : trimmed
@@ -13930,7 +13958,7 @@ class TerminalController {
         case "mobile.workspace.list", "workspace.list":
             result = v2MobileWorkspaceList(params: request.params)
         case "workspace.create":
-            result = v2MobileWorkspaceCreate(params: request.params)
+            result = await v2MobileWorkspaceCreate(params: request.params)
         case "mobile.terminal.create", "terminal.create":
             result = v2MobileTerminalCreate(params: request.params)
         case "mobile.terminal.input", "terminal.input":
@@ -14259,22 +14287,37 @@ class TerminalController {
         guard let paneId = workspace.bonsplitController.focusedPaneId ?? workspace.bonsplitController.allPaneIds.first else {
             return .err(code: "not_found", message: "Pane not found", data: nil)
         }
-        guard let terminal = workspace.newTerminalSurface(
+        if RemoteTmuxController.isLocalPrimaryEnabled, !workspace.isRemoteTmuxMirror {
+            return .err(
+                code: "unsupported_in_local_tmux",
+                message: String(
+                    localized: "localTmux.primary.error.nativeTerminalSurface",
+                    defaultValue: "Terminal surfaces can only be created in a tmux-backed workspace while local tmux workspaces are enabled."
+                ),
+                data: nil
+            )
+        }
+        let creation = workspace.newTerminalSurfaceOutcome(
             inPane: paneId,
             focus: false,
             autoRefreshMetadata: false,
             preserveFocusWhenUnfocused: false,
             inheritWorkingDirectoryFallback: true,
             allowTextBoxFocusDefault: false
-        ) else {
-            return .err(code: "internal_error", message: "Failed to create terminal", data: nil)
-        }
-        // workspace.updated emit is handled by MobileWorkspaceListObserver.
-        return v2MobileWorkspaceList(
-            params: params,
-            tabManager: tabManager,
-            createdTerminalID: terminal.id.uuidString
         )
+        switch creation {
+        case .routedToRemote:
+            return v2MobileWorkspaceList(params: params, tabManager: tabManager)
+        case .failed:
+            return .err(code: "internal_error", message: "Failed to create terminal", data: nil)
+        case .created(let terminal):
+            // workspace.updated emit is handled by MobileWorkspaceListObserver.
+            return v2MobileWorkspaceList(
+                params: params,
+                tabManager: tabManager,
+                createdTerminalID: terminal.id.uuidString
+            )
+        }
     }
 
     func v2MobileTerminalReplay(params: [String: Any]) -> V2CallResult {

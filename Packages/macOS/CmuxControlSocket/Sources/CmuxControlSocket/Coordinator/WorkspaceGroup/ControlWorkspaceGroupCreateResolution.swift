@@ -28,6 +28,9 @@ public enum ControlWorkspaceGroupCreateResolution: Sendable, Equatable {
     /// The group could not be created (legacy `not_created` / "Group was not
     /// created", `data: nil`).
     case notCreated
+    /// Creation is disabled by the app's active terminal-workspace backend.
+    /// Carries the app-bundle-localized user-facing explanation.
+    case unsupported(String)
     /// The group was created. Carries its snapshot for the `group` payload.
     case created(ControlWorkspaceGroupSnapshot)
 }

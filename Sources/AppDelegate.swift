@@ -511,7 +511,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// About Titlebar Debug options store, applied by the About/Acknowledgments windows.
     var aboutTitlebarDebugStore: AboutTitlebarDebugStore { debugWindowsCoordinator.aboutTitlebarStore }
     /// Coordinates remote tmux (`ssh … tmux -CC`) mirroring; composition-root owned.
-    let remoteTmuxController = RemoteTmuxController()
+    lazy var remoteTmuxController = RemoteTmuxController()
     private let systemAppearanceObserver = SystemAppearanceObserver()
     private static let reloadConfigurationMenuItemIdentifier = NSUserInterfaceItemIdentifier("com.cmux.reloadConfiguration")
     private static let cachedIsRunningUnderXCTest = detectRunningUnderXCTest(ProcessInfo.processInfo.environment)
@@ -1177,7 +1177,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 #endif
 
     override init() {
-        super.init(); Self.shared = self
+        super.init()
+        RemoteTmuxController.seedLocalPrimaryDevelopmentDefaultIfNeeded()
+        Self.shared = self
         AgentChatThemeSync.start()
         // Inverts the surface registry's legacy AppDelegate.shared reach-up:
         // the registry asks this delegate (via MainWindowRouteRetiring) to
@@ -3303,6 +3305,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private func attemptStartupSessionRestoreIfNeeded(primaryWindow: NSWindow) -> Bool {
         guard !didAttemptStartupSessionRestore else { return false }
         didAttemptStartupSessionRestore = true
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            startupSessionSnapshot = nil
+            return false
+        }
         // Flush deferred navigation links unless additional restored windows remain pending.
         defer {
             if !isApplyingSessionRestore {
@@ -3391,6 +3397,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @discardableResult
     func reopenPreviousSession(shouldActivate: Bool = true) -> Bool {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
         guard let snapshot = sessionSnapshotStore.loadReopenSessionSnapshot(fileURL: nil) else {
             return false
         }
@@ -3402,6 +3409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ snapshot: AppSessionSnapshot,
         shouldActivate: Bool = true
     ) -> Bool {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
         guard let snapshot = SessionPersistencePolicy.pruningCmuxCrashDiagnosticWindows(from: snapshot).snapshot else {
             return false
         }
@@ -5134,6 +5142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @discardableResult
     func addWorkspace(windowId: UUID, workingDirectory: String? = nil, bringToFront shouldBringToFront: Bool = false) -> UUID? {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return nil }
         guard let state = scriptableMainWindow(windowId: windowId) else { return nil }
         if shouldBringToFront, let window = state.window {
             setActiveMainWindow(window)
@@ -7106,10 +7115,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc func openNewMainWindow(_ sender: Any?) {
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            let windowId = ensureInitialMainWindowIfNeeded()
+            _ = focusMainWindow(windowId: windowId)
+            return
+        }
         _ = createMainWindow(sourceWindow: preferredSourceWindowForNewMainWindow(sender: sender))
     }
 
     func openNewMainWindow(preferredWindow: NSWindow?) {
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            let windowId = ensureInitialMainWindowIfNeeded()
+            _ = focusMainWindow(windowId: windowId)
+            return
+        }
         _ = createMainWindow(sourceWindow: preferredWindow)
     }
 
@@ -7201,7 +7220,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
 
         return createMainWindow(
-            initialTerminalInput: suppressWelcome ? "" : nil,
+            initialTerminalInput: suppressWelcome || RemoteTmuxController.isLocalPrimaryEnabled ? "" : nil,
             preferredWindowId: startupPrimaryWindowIdForInitialMainWindow(),
             shouldActivate: shouldActivate
         )
@@ -7220,7 +7239,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         event: NSEvent? = nil,
         debugSource: String = "newWorkspace"
     ) -> Bool {
-        performNewWorkspaceCreationAction(
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            return performNewLocalTmuxWorkspaceAction(
+                tabManager: preferredTabManager,
+                event: event,
+                debugSource: debugSource
+            )
+        }
+        return performNewWorkspaceCreationAction(
             initialSurface: .terminal,
             preferredTabManager: preferredTabManager,
             event: event,
@@ -7384,6 +7410,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                         in: context
                     )
                     context.tabManager.setPinned(workspace, pinned: true)
+                case .remoteTmux:
+                    // Controller-owned only; ordinary workspace actions must
+                    // never manufacture an unbound mirror shell.
+                    return false
                 }
             }
             return true
@@ -7512,6 +7542,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         debugSource: String = "cloudVM",
         onCompletion: ((CloudVMActionLauncher.Completion) -> Void)? = nil
     ) -> Bool {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else {
+            NSSound.beep()
+            return false
+        }
         let context = preferredTabManager.flatMap { mainWindowContext(for: $0) }
             ?? preferredWindow.flatMap { contextForMainWindow($0) }
             ?? preferredMainWindowContextForWorkspaceCreation(event: nil, debugSource: debugSource)
@@ -7908,9 +7942,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return false
         }
 
-        let targetWorkspaceId = targetTabManager.selectedWorkspace?.id
-            ?? targetTabManager.tabs.first?.id
-            ?? targetTabManager.addWorkspace(select: true).id
+        let targetWorkspaceId: UUID
+        if let existingWorkspaceId = targetTabManager.selectedWorkspace?.id
+            ?? targetTabManager.tabs.first?.id {
+            targetWorkspaceId = existingWorkspaceId
+        } else {
+            guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
+            targetWorkspaceId = targetTabManager.addWorkspace(select: true).id
+        }
         let normalizedDirectoryURL = directoryURL.standardizedFileURL
 
         VSCodeServeWebController.shared.ensureServeWebURL(vscodeApplicationURL: vscodeApplicationURL) { serveWebURL in
@@ -8104,6 +8143,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         workingDirectory: String,
         debugSource: String
     ) {
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            _ = performNewLocalTmuxWorkspaceAction(
+                tabManager: nil,
+                event: nil,
+                debugSource: debugSource,
+                workingDirectory: workingDirectory
+            )
+            return
+        }
         if addWorkspaceInPreferredMainWindow(
             workingDirectory: workingDirectory,
             shouldBringToFront: true,
@@ -8118,6 +8166,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ request: TerminalDefaultFileOpenRequest,
         debugSource: String
     ) {
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            _ = performNewLocalTmuxWorkspaceAction(
+                tabManager: nil,
+                event: nil,
+                debugSource: debugSource,
+                title: request.fileURL.lastPathComponent,
+                workingDirectory: request.workingDirectory,
+                initialInput: request.initialInput
+            )
+            return
+        }
         if addWorkspaceInPreferredMainWindow(
             workingDirectory: request.workingDirectory,
             initialTerminalInput: request.initialInput,
@@ -8158,6 +8217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let workspace = context.tabManager.selectedWorkspace
             ?? context.tabManager.addWorkspace(select: shouldBringToFront, autoWelcomeIfNeeded: false)
+        if RemoteTmuxController.isLocalPrimaryEnabled, !workspace.isRemoteTmuxMirror {
+            return false
+        }
         // In a remote tmux mirror workspace, paste targets the existing focused
         // pane. Do NOT fall back to creating a new surface there: that would
         // route to a remote `new-window` (a surprising side effect) yet still
@@ -8205,6 +8267,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
         let workspace = context.tabManager.selectedWorkspace
             ?? context.tabManager.addWorkspace(workingDirectory: parentDirectory, select: true)
+        if RemoteTmuxController.isLocalPrimaryEnabled, !workspace.isRemoteTmuxMirror {
+            return false
+        }
         guard let paneId = workspace.bonsplitController.focusedPaneId
             ?? workspace.bonsplitController.allPaneIds.first else {
             return false
@@ -8234,6 +8299,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         event: NSEvent? = nil,
         debugSource: String = "unspecified"
     ) -> Workspace? {
+        if RemoteTmuxController.isLocalPrimaryEnabled, initialSurface == .terminal {
+            return nil
+        }
         #if DEBUG
         logWorkspaceCreationRouting(
             phase: "request",
@@ -8615,6 +8683,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         initialWorkspaceTitle: String? = nil,
         initialWorkingDirectory: String? = nil,
         initialTerminalInput: String? = nil,
+        createLocalTmuxSession: Bool = false,
         sessionWindowSnapshot: SessionWindowSnapshot? = nil,
         preferredWindowId: UUID? = nil,
         shouldActivate: Bool = true,
@@ -8624,16 +8693,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         restoredSessionSnapshotHandler: (([[UUID: UUID]], TabManager) -> Void)? = nil
     ) -> UUID {
         reserveInitialSocketPathIfNeeded()
-        let requestedWindowId = preferredWindowId ?? sessionWindowSnapshot?.windowId
+        let localPrimaryEnabled = RemoteTmuxController.isLocalPrimaryEnabled
+        let effectiveSessionWindowSnapshot = localPrimaryEnabled ? nil : sessionWindowSnapshot
+        if localPrimaryEnabled,
+           let existing = sortedMainWindowContextsForSessionSnapshot().first(where: {
+               resolvedWindow(for: $0) != nil
+           }) {
+            if shouldActivate, let window = resolvedWindow(for: existing) {
+                mainWindowVisibilityController.focus(
+                    window,
+                    reason: .createMainWindow,
+                    activation: .none,
+                    respectActivationSuppression: false
+                )
+            }
+            return existing.windowId
+        }
+        let requestedWindowId = preferredWindowId ?? effectiveSessionWindowSnapshot?.windowId
         let windowId = availableWindowIdForNewMainWindow(preferredWindowId: requestedWindowId) ?? UUID()
+        let requestedLocalTmuxInitialInput = localPrimaryEnabled ? initialTerminalInput : nil
+        let shouldCreateRequestedLocalTmuxSession = localPrimaryEnabled
+            && (createLocalTmuxSession
+                || initialWorkspaceTitle != nil
+                || initialWorkingDirectory != nil
+                || requestedLocalTmuxInitialInput?.isEmpty == false)
+        let resolvedInitialTerminalInput = localPrimaryEnabled ? "" : initialTerminalInput
         let tabManager = TabManager(
             initialWorkspaceTitle: initialWorkspaceTitle,
             initialWorkingDirectory: initialWorkingDirectory,
-            initialTerminalInput: initialTerminalInput,
-            autoWelcomeIfNeeded: initialTerminalInput == nil
+            initialTerminalInput: resolvedInitialTerminalInput,
+            createInitialWorkspace: !localPrimaryEnabled,
+            autoWelcomeIfNeeded: resolvedInitialTerminalInput == nil
         )
         tabManager.windowId = windowId
-        if let sessionWindowSnapshot {
+        if let sessionWindowSnapshot = effectiveSessionWindowSnapshot {
             let restoredPanelIdsByWorkspaceIndex = tabManager.restoreSessionSnapshot(
                 sessionWindowSnapshot.tabManager,
                 remapClosedPanelHistory: remapClosedPanelHistoryFromSessionSnapshot,
@@ -8650,7 +8743,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             restoredSessionSnapshotHandler?(restoredPanelIdsByWorkspaceIndex, tabManager)
         }
 
-        let sidebarWidth = sessionWindowSnapshot?.sidebar.width
+        let sidebarWidth = effectiveSessionWindowSnapshot?.sidebar.width
             .map { SessionPersistencePolicy.sanitizedSidebarWidth($0) }
             ?? SessionPersistencePolicy.defaultSidebarWidth
 #if DEBUG
@@ -8662,11 +8755,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let sidebarState = SidebarState(
             isVisible: shouldStartWithHiddenSidebarForTerminalViewportUITest
                 ? false
-                : (sessionWindowSnapshot?.sidebar.isVisible ?? true),
+                : (effectiveSessionWindowSnapshot?.sidebar.isVisible ?? true),
             persistedWidth: CGFloat(sidebarWidth)
         )
         let sidebarSelectionState = SidebarSelectionState(
-            selection: sessionWindowSnapshot?.sidebar.selection.sidebarSelection ?? .tabs
+            selection: effectiveSessionWindowSnapshot?.sidebar.selection.sidebarSelection ?? .tabs
         )
 
         // Seed the per-window Bonsplit tab-bar leading inset before ContentView first
@@ -8731,8 +8824,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return sourceWindow?.styleMask.contains(.fullScreen) == true
         }()
         let shouldTemporarilyDisallowFullScreenTiling =
-            sessionWindowSnapshot == nil && sourceWindowIsNativeFullScreen
-        let restoredFrame = resolvedWindowFrame(from: sessionWindowSnapshot)
+            effectiveSessionWindowSnapshot == nil && sourceWindowIsNativeFullScreen
+        let restoredFrame = resolvedWindowFrame(from: effectiveSessionWindowSnapshot)
         let persistedGeometryFrame = (restoredFrame == nil && sourceWindow == nil)
             ? resolvedPersistedWindowGeometryFrame()
             : nil
@@ -8803,7 +8896,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             // unset and falls through to detach below (server stays alive for resume).
             if self.remoteTmuxController.consumeKillSessionsOnWindowClose(windowId: windowId),
                let manager {
-                for workspace in manager.tabs where workspace.isRemoteTmuxMirror {
+                for workspace in manager.tabs
+                where self.remoteTmuxController.isLocalPrimaryMirrorWorkspace(workspaceId: workspace.id) {
                     self.remoteTmuxController.handleWorkspaceClosed(workspaceId: workspace.id)
                 }
             }
@@ -8888,6 +8982,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // when unset. See DevWindowDisplayDefault.
         DevWindowDisplayDefault.applyToNewWindow(window)
 #endif
+        if localPrimaryEnabled {
+            remoteTmuxController.startLocalPrimary(
+                in: tabManager,
+                activate: shouldActivate,
+                requestedSessionName: initialWorkspaceTitle,
+                requestedWorkingDirectory: initialWorkingDirectory,
+                requestedInitialInput: requestedLocalTmuxInitialInput,
+                createRequestedSession: shouldCreateRequestedLocalTmuxSession
+            )
+        }
         return windowId
     }
 
@@ -8902,6 +9006,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func openWelcomeWorkspace() {
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            _ = performNewLocalTmuxWorkspaceAction(
+                tabManager: nil,
+                event: nil,
+                debugSource: "welcome",
+                initialInput: "cmux welcome\n"
+            )
+            return
+        }
         guard let context = preferredMainWindowContextForWorkspaceCreation(event: nil, debugSource: "welcome") else {
             return
         }
@@ -9506,7 +9619,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return tab.focusedTerminalPanel
     }
 
-    private func sendTextWhenReady(
+    func sendTextWhenReady(
         _ text: String,
         to tab: Tab,
         preferredPanelId: UUID? = nil,
@@ -9830,6 +9943,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     @objc func openDebugStressWorkspacesWithLoadedSurfaces(_ sender: Any?) {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else {
+            NSSound.beep()
+            return
+        }
         guard !debugStressWorkspaceCreationInProgress else { return }
         guard let tabManager else { return }
 
@@ -14880,6 +14997,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @discardableResult
     func createEmptyWorkspaceGroup(tabManager explicitTabManager: TabManager? = nil, preferredWindow: NSWindow? = nil) -> Bool {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
         let targetWindow = preferredWindow ?? shortcutRoutingActiveWindow
         let resolvedTabs: TabManager? = explicitTabManager ?? contextForMainWindow(targetWindow)?.tabManager ?? self.tabManager
         guard let tabs = resolvedTabs, tabs.selectedTab?.isRemoteTmuxMirror != true else { return false }
@@ -14888,6 +15006,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     @discardableResult
     func handleGroupSelectedWorkspacesShortcut(preferredWindow: NSWindow? = nil) -> Bool {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
         // Resolve the TabManager for the preferred/key/main window first so
         // multi-window users get the group created in the window they were
         // looking at. Fall back to the app-level tabManager only if no window
@@ -15287,6 +15406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         tabManager: TabManager,
         groupId: UUID
     ) -> Bool {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
         guard let context = mainWindowContexts.values.first(where: { $0.tabManager === tabManager }) else {
             return false
         }
@@ -15415,9 +15535,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         case .builtIn(let builtIn):
             switch builtIn {
             case .newWorkspace:
-                context.tabManager.addWorkspace()
-                onExecuted?()
-                return true
+                let didStart = performNewWorkspaceAction(
+                    tabManager: context.tabManager,
+                    debugSource: "configured.cmux.newWorkspace"
+                )
+                if didStart { onExecuted?() }
+                return didStart
             case .newAgentChat: return performConfiguredNewAgentChatAction(context: context, preferredWindow: preferredWindow, onExecuted: onExecuted)
             case .cloudVM:
                 let didStart = performCloudVMAction(

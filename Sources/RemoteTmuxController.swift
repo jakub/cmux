@@ -31,16 +31,58 @@ final class RemoteTmuxController {
     private var connectionsByHostSession: [String: RemoteTmuxControlConnection] = [:]
     private var connectionObserverTokensByHostSession: [String: RemoteTmuxControlConnection.ObserverToken] = [:]
 
-    init() {}
+    nonisolated static let localPrimaryHost = RemoteTmuxHost(destination: "localhost")
+    let localPrimaryRuntime: LocalTmuxPrimaryRuntime
 
-    /// Synchronous read of the `remoteTmux` beta flag for AppKit/socket paths
-    /// that run outside the SwiftUI update cycle. Resolves the same catalog key
-    /// the settings store persists to, so the catalog stays the single source
-    /// of the key, decode, and default. SwiftUI binds via
-    /// `@LiveSetting(\.betaFeatures.remoteTmux)`.
+    var localPrimaryEnabled: Bool { localPrimaryRuntime.isEnabled }
+
+    init(localPrimaryEnabled: Bool = RemoteTmuxController.isLocalPrimaryEnabled) {
+        localPrimaryRuntime = LocalTmuxPrimaryRuntime(isEnabled: localPrimaryEnabled)
+    }
+
+    /// Makes local-primary mode the default for tagged development builds while
+    /// preserving the catalog's opt-in default for release builds. An existing
+    /// user value remains authoritative; only an unset tagged preference is
+    /// seeded.
+    nonisolated static func seedLocalPrimaryDevelopmentDefaultIfNeeded(
+        defaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
+#if DEBUG
+        guard let rawTag = environment["CMUX_TAG"] else { return }
+        let tag = rawTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tag.isEmpty, tag != "default" else { return }
+        let key = SettingCatalog().betaFeatures.localTmuxPrimary
+        guard !key.hasStoredValue(in: defaults) else { return }
+        key.set(true, in: defaults)
+#endif
+    }
+
+    /// Synchronous read of whether the remote-tmux engine is available to
+    /// AppKit/socket paths outside the SwiftUI update cycle. Local-primary mode
+    /// deliberately enables the same engine without mutating the independent
+    /// remote-host beta preference.
     nonisolated static var isEnabled: Bool {
-        let key = SettingCatalog().betaFeatures.remoteTmux
-        return Bool.decodeFromUserDefaults(UserDefaults.standard.object(forKey: key.userDefaultsKey)) ?? key.defaultValue
+        let remoteKey = SettingCatalog().betaFeatures.remoteTmux
+        return remoteKey.value(in: .standard) || isLocalPrimaryEnabled
+    }
+
+    nonisolated static func isEnabled(defaults: UserDefaults) -> Bool {
+        let betaFeatures = SettingCatalog().betaFeatures
+        return betaFeatures.remoteTmux.value(in: defaults)
+            || betaFeatures.localTmuxPrimary.value(in: defaults)
+    }
+
+    /// Process-latched because switching workspace backends under live native
+    /// workspaces would create mixed ownership. The Settings row explicitly
+    /// requires a restart; the pure `defaults:` helper remains injectable.
+    nonisolated private static let localPrimaryEnabledForProcess =
+        SettingCatalog().betaFeatures.localTmuxPrimary.value(in: .standard)
+
+    nonisolated static var isLocalPrimaryEnabled: Bool { localPrimaryEnabledForProcess }
+
+    nonisolated static func isLocalPrimaryEnabled(defaults: UserDefaults) -> Bool {
+        SettingCatalog().betaFeatures.localTmuxPrimary.value(in: defaults)
     }
 
     /// Returns (creating if needed) the transport for a host.
@@ -168,6 +210,10 @@ final class RemoteTmuxController {
                     oldName: oldName,
                     newName: newName
                 )
+            },
+            onSessionsChanged: { [weak self, weak connection] in
+                guard let self, let connection else { return }
+                self.handleServerSessionsChanged(host: connection.host)
             }
         )
     }
@@ -302,6 +348,10 @@ final class RemoteTmuxController {
         let connection = try attach(host: host, sessionName: sessionName)
         let workspace = tabManager.addWorkspace(
             title: sessionName,
+            initialSurface: localPrimaryEnabled
+                && host.connectionHash == Self.localPrimaryHost.connectionHash
+                ? .remoteTmux
+                : .terminal,
             select: false,
             autoWelcomeIfNeeded: false
         )
@@ -591,9 +641,13 @@ final class RemoteTmuxController {
             "remote-tmux: session ended hostHasOtherMirrors=\(hostHasOtherMirrors)"
         )
         #endif
-        if (mirrorWorkspace ?? AppDelegate.shared?.tabManagerFor(tabId: workspaceId)?
-            .tabs.first(where: { $0.id == workspaceId }))?
-            .handleRemoteTmuxSessionEndedKeepingWorkspaceOpenIfNeeded() == true { return }
+        let manager = mirrorWorkspace?.owningTabManager ?? AppDelegate.shared?.tabManagerFor(tabId: workspaceId)
+        let workspace = mirrorWorkspace ?? manager?.tabs.first(where: { $0.id == workspaceId })
+        if let manager, let workspace,
+           recoverLocalPrimaryMirrorIfNeeded(host: host, tabManager: manager, workspace: workspace) {
+            return
+        }
+        if workspace?.handleRemoteTmuxSessionEndedKeepingWorkspaceOpenIfNeeded() == true { return }
         // Close just the dead workspace. `closeWorkspace` refuses to remove a
         // window's last workspace (it would leave a windowless state), so if the
         // dead mirror is the only workspace in its window, add a fresh local
@@ -602,8 +656,6 @@ final class RemoteTmuxController {
         // avoids inheriting the mirror's remote path; `select: false` keeps the
         // disconnect from stealing focus (closeWorkspace reselects after the
         // dead one is removed).
-        let manager = mirrorWorkspace?.owningTabManager ?? AppDelegate.shared?.tabManagerFor(tabId: workspaceId)
-        let workspace = mirrorWorkspace ?? manager?.tabs.first(where: { $0.id == workspaceId })
         if let manager, let workspace {
             if manager.tabs.count == 1 {
                 _ = manager.addWorkspace(inheritWorkingDirectory: false, select: false)
@@ -660,7 +712,8 @@ final class RemoteTmuxController {
             guard windowRegistry.consumeKillSessionsOnClose(windowId: windowId) else { continue }
             let closingWorkspaceIds = Set(AppDelegate.shared?.tabManagerFor(windowId: windowId)?.tabs.map(\.id) ?? [])
             let mirrorsInWindow = sessionMirrors.filter { _, mirror in
-                mirror.mirroredWorkspaceId.map(closingWorkspaceIds.contains) == true
+                mirror.host.connectionHash == Self.localPrimaryHost.connectionHash
+                    && mirror.mirroredWorkspaceId.map(closingWorkspaceIds.contains) == true
             }
             for (key, mirror) in mirrorsInWindow {
                 let host = mirror.host
@@ -769,6 +822,7 @@ final class RemoteTmuxController {
     /// CLI's `ssh -f` left them persistent). Does NOT kill any remote tmux
     /// server/session — only the local control clients and masters.
     func detachAll() {
+        localPrimaryRuntime.reset()
         let connections = Array(connectionsByHostSession.keys).compactMap { removeCachedConnection(forKey: $0) }
         for connection in connections { connection.stop() }
         // Fire-and-forget `ssh -O exit` per endpoint: it hits the local control

@@ -19,6 +19,7 @@ final class RemoteTmuxConnectionObservers {
     private var paneReflowObservers: [Token: (_ paneId: Int, _ noReflow: Bool) -> Void] = [:]
     private var activePaneObservers: [Token: (_ windowId: Int, _ paneId: Int) -> Void] = [:]
     private var sessionChangedObservers: [Token: (_ oldName: String, _ newName: String) -> Void] = [:]
+    private var sessionsChangedObservers: [Token: () -> Void] = [:]
     private var topologyObservers: [Token: () -> Void] = [:]
     private var reconnectReadyObservers: [Token: () -> Void] = [:]
     private var exitObservers: [Token: () -> Void] = [:]
@@ -45,6 +46,8 @@ final class RemoteTmuxConnectionObservers {
     ///   - onSessionChanged: fires when tmux confirms a session name change via
     ///     `%session-changed` or `%session-renamed`; consumers must treat this as
     ///     the authoritative point for re-keying session-owned state.
+    ///   - onSessionsChanged: fires when tmux reports that the server-wide set
+    ///     of sessions changed.
     ///   - onTopologyChanged: fires when the window/pane topology changes.
     ///   - onReconnectReady: fires after reconnect attach drainage and reseeding.
     ///   - onExit: fires once when the connection PERMANENTLY ends (a genuine tmux
@@ -60,6 +63,7 @@ final class RemoteTmuxConnectionObservers {
         onPaneReflow: ((_ paneId: Int, _ noReflow: Bool) -> Void)?,
         onActivePaneChanged: ((_ windowId: Int, _ paneId: Int) -> Void)?,
         onSessionChanged: ((_ oldName: String, _ newName: String) -> Void)?,
+        onSessionsChanged: (() -> Void)?,
         onTopologyChanged: (() -> Void)?,
         onReconnectReady: (() -> Void)?,
         onExit: (() -> Void)?,
@@ -71,6 +75,7 @@ final class RemoteTmuxConnectionObservers {
         if let onPaneReflow { paneReflowObservers[token] = onPaneReflow }
         if let onActivePaneChanged { activePaneObservers[token] = onActivePaneChanged }
         if let onSessionChanged { sessionChangedObservers[token] = onSessionChanged }
+        if let onSessionsChanged { sessionsChangedObservers[token] = onSessionsChanged }
         if let onTopologyChanged { topologyObservers[token] = onTopologyChanged }
         if let onReconnectReady { reconnectReadyObservers[token] = onReconnectReady }
         if let onExit { exitObservers[token] = onExit }
@@ -85,6 +90,7 @@ final class RemoteTmuxConnectionObservers {
         paneReflowObservers[token] = nil
         activePaneObservers[token] = nil
         sessionChangedObservers[token] = nil
+        sessionsChangedObservers[token] = nil
         topologyObservers[token] = nil
         reconnectReadyObservers[token] = nil
         exitObservers[token] = nil
@@ -116,6 +122,11 @@ final class RemoteTmuxConnectionObservers {
     /// Notifies every observer that the remote session name changed.
     func emitSessionChanged(oldName: String, newName: String) {
         for callback in Array(sessionChangedObservers.values) { callback(oldName, newName) }
+    }
+
+    /// Notifies every observer that the server-wide session set changed.
+    func notifySessionsChanged() {
+        for callback in Array(sessionsChangedObservers.values) { callback() }
     }
 
     /// Notifies every topology observer that the window/pane layout changed.

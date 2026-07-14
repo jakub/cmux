@@ -18,6 +18,9 @@ public enum ControlWorkspaceGroupNewWorkspaceResolution: Sendable, Equatable {
     /// The group was not found (legacy `not_found` / "Group not found", `data:
     /// {"group_id": …}`).
     case notFound
+    /// Creation is disabled by the app's active terminal-workspace backend.
+    /// Carries the app-bundle-localized user-facing explanation.
+    case unsupported(String)
     /// The workspace was created in the group. Carries its id (the coordinator
     /// mints the workspace ref).
     case created(workspaceID: UUID)

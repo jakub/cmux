@@ -12,6 +12,7 @@ public struct BetaFeaturesSection: View {
     @State private var extensions: DefaultsValueModel<Bool>
     @State private var customSidebars: DefaultsValueModel<Bool>
     @State private var remoteTmux: DefaultsValueModel<Bool>
+    @State private var localTmuxPrimary: DefaultsValueModel<Bool>
 
     public init(defaultsStore: UserDefaultsSettingsStore, catalog: SettingCatalog) {
         _feed = State(initialValue: DefaultsValueModel(store: defaultsStore, key: catalog.betaFeatures.rightSidebarFeed))
@@ -19,6 +20,7 @@ public struct BetaFeaturesSection: View {
         _extensions = State(initialValue: DefaultsValueModel(store: defaultsStore, key: catalog.betaFeatures.extensions))
         _customSidebars = State(initialValue: DefaultsValueModel(store: defaultsStore, key: catalog.betaFeatures.customSidebars))
         _remoteTmux = State(initialValue: DefaultsValueModel(store: defaultsStore, key: catalog.betaFeatures.remoteTmux))
+        _localTmuxPrimary = State(initialValue: DefaultsValueModel(store: defaultsStore, key: catalog.betaFeatures.localTmuxPrimary))
     }
 
     public var body: some View {
@@ -38,6 +40,8 @@ public struct BetaFeaturesSection: View {
                 customSidebarsRow
                 SettingsCardDivider()
                 remoteTmuxRow
+                SettingsCardDivider()
+                localTmuxPrimaryRow
             }
         }
         .task { startObservingSettings() }
@@ -50,6 +54,7 @@ public struct BetaFeaturesSection: View {
             extensions,
             customSidebars,
             remoteTmux,
+            localTmuxPrimary,
         ]
         models.forEach { $0.startObserving() }
     }
@@ -136,6 +141,23 @@ public struct BetaFeaturesSection: View {
                 .labelsHidden()
                 .controlSize(.small)
                 .accessibilityIdentifier("SettingsBetaRemoteTmuxToggle")
+        }
+    }
+
+    @ViewBuilder
+    private var localTmuxPrimaryRow: some View {
+        SettingsCardRow(
+            configurationReview: .settingsOnly,
+            searchAnchorID: "setting:betaFeatures:localTmuxPrimary",
+            String(localized: "settings.betaFeatures.localTmuxPrimary", defaultValue: "Local tmux workspaces"),
+            subtitle: localTmuxPrimary.current
+                ? String(localized: "settings.betaFeatures.localTmuxPrimary.subtitleOn", defaultValue: "Uses localhost tmux sessions as terminal workspaces. New workspaces create tmux sessions; closing cmux leaves them running. Restart cmux after changing this setting.")
+                : String(localized: "settings.betaFeatures.localTmuxPrimary.subtitleOff", defaultValue: "Uses cmux's native terminal workspaces. Restart cmux after changing this setting.")
+        ) {
+            Toggle("", isOn: Binding(get: { localTmuxPrimary.current }, set: { localTmuxPrimary.set($0) }))
+                .labelsHidden()
+                .controlSize(.small)
+                .accessibilityIdentifier("SettingsBetaLocalTmuxPrimaryToggle")
         }
     }
 }

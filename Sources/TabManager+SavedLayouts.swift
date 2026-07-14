@@ -3,6 +3,7 @@ import Foundation
 extension TabManager {
     @discardableResult
     func openWorkspace(fromSavedLayout layout: CmuxSavedLayout, cwdOverride: String?, focus: Bool) -> Workspace? {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return nil }
         let baseCwd = FileManager.default.homeDirectoryForCurrentUser.path
         let resolvedCwd = CmuxConfigStore.resolveCwd(cwdOverride ?? layout.workspace.cwd, relativeTo: baseCwd)
         let workspace = addWorkspace(

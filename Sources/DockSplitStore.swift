@@ -258,6 +258,7 @@ final class DockSplitStore: BonsplitDelegate {
         preferredProfileID: UUID? = nil,
         bypassInsecureHTTPHostOnce: String? = nil
     ) -> UUID? {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled || kind != .terminal else { return nil }
         ensureLoaded()
         guard let panel = makePanel(
             kind: kind,
@@ -302,6 +303,7 @@ final class DockSplitStore: BonsplitDelegate {
         initialDividerPosition: CGFloat? = nil,
         focus: Bool = true
     ) -> UUID? {
+        guard !RemoteTmuxController.isLocalPrimaryEnabled || kind != .terminal else { return nil }
         ensureLoaded()
         guard let panel = makePanel(
             kind: kind,
@@ -442,6 +444,7 @@ final class DockSplitStore: BonsplitDelegate {
     ) -> (any Panel)? {
         switch kind {
         case .terminal:
+            guard !RemoteTmuxController.isLocalPrimaryEnabled else { return nil }
             return makeTerminalPanel(
                 command: command,
                 useLoginShellWrapper: false,
@@ -468,6 +471,7 @@ final class DockSplitStore: BonsplitDelegate {
     private func makePanel(for def: DockControlDefinition, baseDirectory: String) -> (any Panel)? {
         switch def.kind {
         case .terminal:
+            guard !RemoteTmuxController.isLocalPrimaryEnabled else { return nil }
             let workingDirectory = Self.resolvedWorkingDirectory(def.cwd, baseDirectory: baseDirectory)
             return makeTerminalPanel(
                 command: def.command,

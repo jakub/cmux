@@ -147,6 +147,11 @@ extension CmuxConfigExecutor {
             }
         }
 
+        // Config workspace layouts can spawn several native terminals and run
+        // setup commands. Until those semantics are translated into tmux
+        // windows/panes, fail closed instead of creating orphan local shells.
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return false }
+
         let resolvedCwd = CmuxConfigStore.resolveCwd(wsDef.cwd, relativeTo: baseCwd)
         let newWorkspace = tabManager.addWorkspace(
             workingDirectory: resolvedCwd,

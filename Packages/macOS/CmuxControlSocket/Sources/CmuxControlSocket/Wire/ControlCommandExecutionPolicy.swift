@@ -89,6 +89,10 @@ public enum ControlCommandExecutionPolicy: Sendable, Equatable {
         "browser.profiles.delete",
         "browser.import.cookies",
         "mobile.attach_ticket.create",
+        // Local-primary workspace creation awaits SSH/tmux and mirror setup.
+        // Native mode uses the same worker lane with one synchronous main hop,
+        // keeping the wire entrypoint stable across the runtime beta setting.
+        "workspace.create",
         // `mobile.terminal.set_font` only validates params and emits a push
         // event via thread-safe MobileHostService statics, so it runs on the worker
         // like the other mobile data-plane verbs. Without this entry the policy
@@ -230,6 +234,10 @@ public enum ControlCommandExecutionPolicy: Sendable, Equatable {
         "notification.create_for_target",
         "notification.create_for_caller",
         "workspace.set_auto_title",
+        // Native-mode in-process callers are safe: the worker handler's main
+        // hop collapses inline. Local-primary mode rejects main-thread callers
+        // before its async wait; real socket traffic always runs off-main.
+        "workspace.create",
         // The v2 resolution reads (tranche D of issue #5757) — the implicit
         // handle-normalization reads nearly every CLI invocation pays 1-3 of.
         // Their nonisolated coordinator bodies
@@ -283,6 +291,9 @@ public enum ControlCommandExecutionPolicy: Sendable, Equatable {
         "notification.create_for_target",
         "notification.create_for_caller",
         "workspace.set_auto_title",
+        // Native-mode in-process callers collapse to the synchronous main
+        // body; local-primary mode rejects main-thread callers before waiting.
+        "workspace.create",
         // The v2 resolution reads: non-blocking single-hop snapshot reads
         // whose hop collapses inline on a main-thread caller, so they are
         // safe by construction — and cmuxTests drive them through

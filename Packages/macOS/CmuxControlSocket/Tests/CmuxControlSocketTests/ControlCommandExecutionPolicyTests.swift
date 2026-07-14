@@ -54,7 +54,7 @@ struct ControlCommandExecutionPolicyTests {
 
     @Test func everythingElseRunsOnTheMainActor() {
         for method in [
-            "workspace.create", "browser.url.get",
+            "browser.url.get",
             "browser.open_split", "browser.get.title", "browser.frame.main",
             "mobile.terminal.create", "feed.jump", "vmx.create", "",
             // Focus-intent verbs stay on the main lane until the mutations
@@ -65,6 +65,10 @@ struct ControlCommandExecutionPolicyTests {
             #expect(policy == .mainActor, "\(method)")
             #expect(!policy.runsOnSocketWorker, "\(method)")
         }
+    }
+
+    @Test func workspaceCreateUsesTheAsyncCapableWorkerLane() {
+        #expect(ControlCommandExecutionPolicy(forMethod: "workspace.create") == .socketWorker(mainThreadCallable: true))
     }
 
     @Test func remoteTmuxTestMethodsOnlyRunOnWorkerInDebugBuilds() {

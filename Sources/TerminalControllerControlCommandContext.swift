@@ -68,10 +68,17 @@ extension TerminalController: ControlWindowContext {
     }
 
     func controlCreateWindowAndActivate() -> UUID? {
-        guard let windowId = AppDelegate.shared?.createMainWindow() else { return nil }
+        guard let appDelegate = AppDelegate.shared else { return nil }
+        let windowId: UUID
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            windowId = appDelegate.ensureInitialMainWindowIfNeeded()
+            _ = appDelegate.focusMainWindow(windowId: windowId)
+        } else {
+            windowId = appDelegate.createMainWindow()
+        }
         // The new window should become key, but setActiveTabManager defensively
         // (preserves the legacy v2WindowCreate side effect and ordering).
-        if let tabManager = AppDelegate.shared?.tabManagerFor(windowId: windowId) {
+        if let tabManager = appDelegate.tabManagerFor(windowId: windowId) {
             setActiveTabManager(tabManager)
         }
         return windowId

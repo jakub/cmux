@@ -3008,6 +3008,10 @@ final class Workspace: Identifiable, ObservableObject {
                 bindSurface(tabId, toPanelId: loadingPanel.id)
                 initialTabId = tabId
             }
+        } else if initialSurface == .remoteTmux {
+            // The tmux session is the only terminal authority. Its control-mode
+            // topology inserts manual-I/O panels after attach; creating a local
+            // TerminalPanel here would briefly spawn an unrelated native PTY.
         } else {
             // Create initial terminal panel
             let terminalPanel = TerminalPanel(
@@ -7034,6 +7038,10 @@ final class Workspace: Identifiable, ObservableObject {
             ) ?? false
             return routed ? .routedToRemote : .failed
         }
+        // Local-primary mode owns every terminal process through tmux. Native
+        // browser-only workspaces may still exist, but adding a terminal to one
+        // must fail closed instead of opening an untracked local shell.
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return .failed }
         guard let panel = newTerminalSplitLocal(
             from: panelId,
             orientation: orientation,
@@ -7340,6 +7348,9 @@ final class Workspace: Identifiable, ObservableObject {
                 ) ?? false
             return routed ? .routedToRemote : .failed
         }
+        // See `newTerminalSplitOutcome`: only a localhost tmux mirror may add
+        // terminal surfaces while local-primary mode owns terminal processes.
+        guard !RemoteTmuxController.isLocalPrimaryEnabled else { return .failed }
         guard let panel = newTerminalSurfaceLocal(
             inPane: paneId,
             focus: focus,
@@ -12600,7 +12611,10 @@ extension Workspace: BonsplitDelegate {
         if let builtInAction = executable.builtInAction {
             switch builtInAction {
             case .newWorkspace:
-                owningTabManager?.addWorkspace()
+                _ = AppDelegate.shared?.performNewWorkspaceAction(
+                    tabManager: owningTabManager,
+                    debugSource: "surfaceTabBar.newWorkspace"
+                )
             case .newAgentChat: performSurfaceTabBarNewAgentChatAction(presentingWindow: presentingWindow)
             case .cloudVM:
                 _ = AppDelegate.shared?.performCloudVMAction(tabManager: owningTabManager, preferredWindow: presentingWindow, debugSource: "surfaceTabBar.cloudVM")

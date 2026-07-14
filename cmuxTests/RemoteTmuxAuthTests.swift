@@ -14,6 +14,24 @@ import Testing
 /// assert produced values and decisions, never source text.
 @Suite struct RemoteTmuxAuthTests {
 
+    @Test @MainActor func sessionsChangedFansOutAndObserverRemovalStopsDelivery() {
+        let connection = RemoteTmuxControlConnection(
+            host: RemoteTmuxHost(destination: "user@host"),
+            sessionName: "dev"
+        )
+        var firstCount = 0
+        var secondCount = 0
+        let first = connection.addObserver(onSessionsChanged: { firstCount += 1 })
+        _ = connection.addObserver(onSessionsChanged: { secondCount += 1 })
+
+        connection.handleMessageForTesting(.sessionsChanged)
+        connection.removeObserver(first)
+        connection.handleMessageForTesting(.sessionsChanged)
+
+        #expect(firstCount == 1)
+        #expect(secondCount == 2)
+    }
+
     // MARK: - Auth-required classification
 
     @Test(arguments: [

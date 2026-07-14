@@ -199,6 +199,12 @@ extension Array where Element == CuratedSettingEntry {
             .init(section: .betaFeatures, id: "dock", title: "Dock", synonyms: "dock right sidebar terminal controls tui beta unstable"),
             .init(section: .betaFeatures, id: "customSidebars", title: "Custom Sidebars", synonyms: "custom sidebars swift json interpreted vibe beta unstable"),
             .init(section: .betaFeatures, id: "remoteTmux", title: "Remote tmux", synonyms: "remote tmux ssh control mode -CC mirror session window pane sidebar workspace beta unstable"),
+            .init(
+                section: .betaFeatures,
+                id: "localTmuxPrimary",
+                title: String(localized: "settings.betaFeatures.localTmuxPrimary", defaultValue: "Local tmux workspaces"),
+                synonyms: "local localhost tmux primary workspace backing service ssh control mode -CC session window pane beta unstable"
+            ),
 
             // Automation
             .init(section: .automation, id: "socket-mode", title: "Socket Control Mode", synonyms: "automation.socketControlMode api socket unix domain control server auth allow password disabled"),

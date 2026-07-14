@@ -740,6 +740,7 @@ final class RemoteTmuxControlConnection {
             applySessionNameChange(sessionId: id, name: renameName, event: "session-renamed", refetchWindows: false)
         case .sessionsChanged:
             record("sessions-changed")
+            observers.notifySessionsChanged()
         case let .windowAdd(id):
             record("window-add @\(id)")
             requestWindows()

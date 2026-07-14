@@ -72,6 +72,12 @@ extension TerminalController: ControlWorkspaceGroupContext {
         guard let tabManager = resolveTabManager(routing: routing) else {
             return .tabManagerUnavailable
         }
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            return .unsupported(String(
+                localized: "localTmux.primary.error.workspaceGroupCreate",
+                defaultValue: "Workspace-group creation is unavailable while local tmux workspaces are enabled."
+            ))
+        }
 
         // Default behavior when children were absent: group the active sidebar
         // selection, or fall back to the caller workspace_id, or the focused
@@ -261,6 +267,12 @@ extension TerminalController: ControlWorkspaceGroupContext {
     ) -> ControlWorkspaceGroupNewWorkspaceResolution {
         guard let tabManager = resolveTabManager(routing: routing) else {
             return .tabManagerUnavailable
+        }
+        if RemoteTmuxController.isLocalPrimaryEnabled {
+            return .unsupported(String(
+                localized: "localTmux.primary.error.workspaceGroupCreate",
+                defaultValue: "Workspace-group creation is unavailable while local tmux workspaces are enabled."
+            ))
         }
         // Placement resolution: explicit `placement` param wins, then the group's
         // per-cwd `newWorkspacePlacement` from cmux.json, then the global default.
