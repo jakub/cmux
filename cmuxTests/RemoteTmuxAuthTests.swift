@@ -344,6 +344,27 @@ import Testing
         #expect(invocation.environment?["TMUX_PANE"] == nil)
         #expect(invocation.environment?["TMUX_TMPDIR"] == "/tmp/direct-lab")
         #expect(invocation.environment?["HOME"] == "/Users/tester")
+        #expect(invocation.environment?["OP_BIOMETRIC_UNLOCK_ENABLED"] == "true")
+        #expect(
+            transport.startupForCreatedSession().environment["OP_BIOMETRIC_UNLOCK_ENABLED"] == "true"
+        )
+    }
+
+    @Test func localTransportPreservesExplicitlyDisabled1PasswordIntegration() {
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            environment: ["OP_BIOMETRIC_UNLOCK_ENABLED": "false"]
+        )
+
+        let invocation = transport.controlProcessInvocation(
+            sessionName: "work",
+            createIfMissing: false
+        )
+
+        #expect(invocation.environment?["OP_BIOMETRIC_UNLOCK_ENABLED"] == "false")
+        #expect(
+            transport.startupForCreatedSession().environment["OP_BIOMETRIC_UNLOCK_ENABLED"] == "false"
+        )
     }
 
     @Test @MainActor func controllerSelectsDirectTransportOnlyForLocalPrimaryEndpoint() {
