@@ -281,7 +281,8 @@ xcodebuild -project cmux.xcodeproj -scheme cmux-unit -configuration Debug \
   -only-testing:cmuxTests/RemoteTmuxNewWindowCwdTests
 ```
 
-The last verified focused run passed 85 tests across six suites.
+The last verified focused run passed 86 tests (114 parameterized test cases)
+across six suites.
 The underlying local-primary patch also adds 22 localized strings; English and
 Japanese values were audited, and the string catalog was compiled by the app
 test target. The direct-transport follow-up adds no user-facing strings.
