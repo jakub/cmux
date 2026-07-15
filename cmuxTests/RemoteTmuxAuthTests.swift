@@ -139,6 +139,103 @@ import Testing
         #expect(invocation.hasSuffix("-c /Users/tester"))
     }
 
+    @Test func localPrimaryTmuxShellLoadsBundledCmuxIntegration() async throws {
+        let root = URL(
+            fileURLWithPath: "/tmp/cmux-shell-\(String(UUID().uuidString.prefix(8)))",
+            isDirectory: true
+        )
+        let home = root.appendingPathComponent("home", isDirectory: true)
+        let record = root.appendingPathComponent("startup.txt", isDirectory: false)
+        let contextRecord = root.appendingPathComponent("context.txt", isDirectory: false)
+        let contextTrigger = root.appendingPathComponent("capture-context", isDirectory: false)
+        let readyChannel = "cmux-shell-ready-\(UUID().uuidString)"
+        let contextReadyChannel = "cmux-context-ready-\(UUID().uuidString)"
+        let workspaceID = UUID().uuidString
+        let surfaceID = UUID().uuidString
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try """
+        _cmux_test_record_startup() {
+            print -r -- "${CMUX_CLAUDE_WRAPPER_SHIM:-}" > '\(record.path)'
+            print -r -- "$PATH" >> '\(record.path)'
+            tmux wait-for -S '\(readyChannel)'
+            precmd_functions=("${(@)precmd_functions:#_cmux_test_record_startup}")
+        }
+        _cmux_test_record_context() {
+            [[ -e '\(contextTrigger.path)' ]] || return 0
+            print -r -- "${CMUX_WORKSPACE_ID:-}|${CMUX_TAB_ID:-}|${CMUX_SURFACE_ID:-}|${CMUX_PANEL_ID:-}" > '\(contextRecord.path)'
+            tmux wait-for -S '\(contextReadyChannel)'
+            precmd_functions=("${(@)precmd_functions:#_cmux_test_record_context}")
+        }
+        precmd_functions+=(_cmux_test_record_startup _cmux_test_record_context)
+        """.write(
+            to: home.appendingPathComponent(".zshrc", isDirectory: false),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let integrationDirectory = repoRoot
+            .appendingPathComponent("Resources/shell-integration", isDirectory: true)
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            environment: [
+                "CMUX_SHELL_INTEGRATION_DIR": integrationDirectory.path,
+                "HOME": home.path,
+                "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+                "SHELL": "/bin/zsh",
+                "TERM": "xterm-256color",
+                "TMPDIR": root.path,
+                "TMUX_TMPDIR": root.path,
+            ],
+            defaultWorkingDirectory: home.path
+        )
+        let startup: [String]
+        let context: [String]
+        do {
+            _ = try await transport.createSession(
+                name: "cmux-shell-\(String(UUID().uuidString.prefix(8)))",
+                workingDirectory: nil
+            )
+            _ = try await transport.runTmux(["wait-for", readyChannel])
+            startup = try String(contentsOf: record, encoding: .utf8)
+                .components(separatedBy: .newlines)
+
+            let panes = try await transport.runTmux(["list-panes", "-a", "-F", "#{pane_id}"])
+            let paneID = try #require(
+                panes.stdout.split(whereSeparator: \.isNewline).first.map(String.init)
+            )
+            _ = try await transport.runTmux([
+                "set-option", "-p", "-t", paneID, "@cmux_workspace_id", workspaceID,
+            ])
+            _ = try await transport.runTmux([
+                "set-option", "-p", "-t", paneID, "@cmux_surface_id", surfaceID,
+            ])
+            try "".write(to: contextTrigger, atomically: true, encoding: .utf8)
+            _ = try await transport.runTmux(["send-keys", "-t", paneID, "Enter"])
+            _ = try await transport.runTmux(["wait-for", contextReadyChannel])
+            context = try String(contentsOf: contextRecord, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(separator: "|", omittingEmptySubsequences: false)
+                .map(String.init)
+        } catch {
+            _ = try? await transport.runTmux(["kill-server"])
+            throw error
+        }
+        _ = try? await transport.runTmux(["kill-server"])
+
+        let shimPath = try #require(startup.first)
+        #expect(!shimPath.isEmpty)
+        #expect(FileManager.default.isExecutableFile(atPath: shimPath))
+        let shellPath = try #require(startup.dropFirst().first)
+        #expect(shellPath.split(separator: ":").first.map(String.init) ==
+            URL(fileURLWithPath: shimPath).deletingLastPathComponent().path)
+        #expect(context == [workspaceID, workspaceID, surfaceID, surfaceID])
+    }
+
     @Test func localTransportRunsDiscoveryAndCreationWithoutSSH() async throws {
         let root = try temporaryDirectory(prefix: "local-tmux-direct-commands")
         defer { try? FileManager.default.removeItem(at: root) }
