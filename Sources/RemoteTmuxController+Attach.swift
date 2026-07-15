@@ -32,10 +32,12 @@ extension RemoteTmuxController {
         defer { windowRegistry.endAttach(hostHash: host.connectionHash) }
 
         let sessions: [RemoteTmuxSession]
+        let transport = transport(for: host)
         do {
-            sessions = try await transport(for: host).discoverMirrorSessions(createIfEmpty: true)
+            sessions = try await transport.discoverMirrorSessions(createIfEmpty: true)
         } catch let error as RemoteTmuxError {
-            if case .commandFailed(_, let stderr) = error,
+            if transport.kind == .ssh,
+               case .commandFailed(_, let stderr) = error,
                RemoteTmuxSSHTransport.indicatesInteractiveRetryWillHelp(stderr) {
                 return .authRequired(sshArgv: host.interactiveAuthInvocation())
             }
@@ -45,9 +47,9 @@ extension RemoteTmuxController {
             throw RemoteTmuxError.unreachable("no tmux sessions on \(host.destination)")
         }
         try Task.checkCancellation()
-        try await ensureControlMasterReadyForBurst(host: host)
+        try await ensureControlTransportReadyForBurst(host: host)
 
-        // Resolve stable ids after every SSH await. Explicit window routing
+        // Resolve stable ids after every transport await. Explicit window routing
         // fails closed if that window disappeared; contextual routing may
         // recover to the active window. Dedicated-window requests create their
         // window only after discovery/auth preflight, so failures never leave
@@ -77,11 +79,10 @@ extension RemoteTmuxController {
                 activeWindowID: activeWindowID,
                 isLive: { appDelegate.tabManagerFor(windowId: $0) != nil }
             ), let existingWindowManager = appDelegate.tabManagerFor(windowId: existingWindowId) else {
-                // A valid target can close while SSH discovery is in flight. A new
+                // A valid target can close while discovery is in flight. A new
                 // host has no mirror owner to clean up the transport in that race.
                 if initialExistingMirrorWindowID == nil {
-                    transportRegistry.remove(connectionHash: host.connectionHash)
-                    RemoteTmuxSSHTransport.spawnControlMasterExit(host: host)
+                    transportRegistry.remove(connectionHash: host.connectionHash)?.spawnShutdown()
                 }
                 throw RemoteTmuxError.unreachable("app not ready")
             }
@@ -155,8 +156,7 @@ extension RemoteTmuxController {
                 && mirror.mirroredWorkspaceId != nil
         }
         guard !hasLiveMirror else { return }
-        transportRegistry.remove(connectionHash: host.connectionHash)
-        RemoteTmuxSSHTransport.spawnControlMasterExit(host: host)
+        transportRegistry.remove(connectionHash: host.connectionHash)?.spawnShutdown()
     }
 
     func existingMirrorManager(for host: RemoteTmuxHost) -> TabManager? {

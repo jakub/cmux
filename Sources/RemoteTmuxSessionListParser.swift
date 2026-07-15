@@ -2,7 +2,7 @@ import Foundation
 
 /// Parses the delimited output of `tmux list-sessions -F` into sessions.
 ///
-/// The expected per-line format (set by ``RemoteTmuxSSHTransport``) is:
+/// The expected per-line format (set by ``RemoteTmuxTransport``) is:
 /// `#{session_id}:#{session_windows}:#{session_attached}:#{session_created}:#{session_name}`
 ///
 /// `session_name` is placed **last** because it is the only free-text field;

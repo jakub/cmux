@@ -4,7 +4,7 @@ import os
 
 /// A live tmux control-mode connection to one remote session.
 ///
-/// Spawns `ssh -tt <ControlMaster> host tmux -CC attach -t <session>` as a
+/// Spawns the selected transport's `tmux -CC attach -t <session>` process as a
 /// `Process` with pipes, feeds its stdout through ``RemoteTmuxControlStreamParser``
 /// (in order, via an `AsyncStream`), and exposes the mirrored topology plus a
 /// live output callback. cmux owns the whole protocol here — so it never depends
@@ -117,6 +117,9 @@ final class RemoteTmuxControlConnection {
     /// produces a fresh attach block).
     private var attachBlockDrained = false
     private let createIfMissing: Bool
+    private let transport: any RemoteTmuxTransport
+
+    var transportKind: RemoteTmuxTransportKind { transport.kind }
 
     /// Stateless pure decoders for control-mode message payloads (pane-state seed,
     /// window reorder, session-gone classification). Holds no state.
@@ -250,16 +253,24 @@ final class RemoteTmuxControlConnection {
     static let altScreenEnterSequence = Data("\u{1b}[?1049h".utf8)
     static let altScreenExitSequence = Data("\u{1b}[?1049l".utf8)
 
-    init(host: RemoteTmuxHost, sessionName: String, createIfMissing: Bool = false) {
+    init(
+        host: RemoteTmuxHost,
+        sessionName: String,
+        createIfMissing: Bool = false,
+        transport: (any RemoteTmuxTransport)? = nil
+    ) {
         self.host = host
         self.sessionName = sessionName
         self.createIfMissing = createIfMissing
+        self.transport = transport ?? RemoteTmuxSSHTransport(host: host)
     }
 
-    /// Spawns the SSH `tmux -CC` process and begins streaming.
+    /// Spawns the transport's `tmux -CC` process and begins streaming.
     func start() throws {
         guard !started else { return }
-        try host.ensureControlSocketDirectory()
+        if transport.kind == .ssh {
+            try host.ensureControlSocketDirectory()
+        }
         // The initial connect honors `createIfMissing`; reconnects never create.
         try spawnProcess(createIfMissing: createIfMissing)
         started = true
@@ -308,7 +319,7 @@ final class RemoteTmuxControlConnection {
         }
     }
 
-    /// Spawns (or re-spawns, on reconnect) the SSH `tmux -CC` process and wires its
+    /// Spawns (or re-spawns, on reconnect) the `tmux -CC` process and wires its
     /// stdout into the parser, consuming stderr for session-gone classification.
     /// Resets the per-process state (parser, pending-command FIFO, captured stderr,
     /// `enterReceived`) so a reconnect starts from a clean control stream.
@@ -339,12 +350,16 @@ final class RemoteTmuxControlConnection {
         preControlOutputBuffer = ""
         enterReceived = false
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: RemoteTmuxHost.defaultSSHExecutablePath())
-        proc.arguments = host.controlModeArguments(
+        let invocation = transport.controlProcessInvocation(
             sessionName: sessionName,
             createIfMissing: createIfMissing
         )
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: invocation.executablePath)
+        proc.arguments = invocation.arguments
+        if let environment = invocation.environment {
+            proc.environment = environment
+        }
         let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
         proc.standardInput = inPipe
         proc.standardOutput = outPipe

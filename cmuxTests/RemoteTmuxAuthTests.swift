@@ -76,7 +76,7 @@ import Testing
         #expect(!RemoteTmuxSSHTransport.indicatesAuthRequired(socketMissing))
     }
 
-    @Test func localPrimaryBootstrapCreatesSessionWithoutSSH() async throws {
+    @Test func localPrimaryCreatesSessionWithoutSSH() async throws {
         let root = try temporaryDirectory(prefix: "local-tmux-bootstrap")
         defer { try? FileManager.default.removeItem(at: root) }
         let invocationLog = root.appendingPathComponent("invocations.log")
@@ -93,8 +93,11 @@ import Testing
             """
         )
 
-        let bootstrapper = LocalTmuxServerBootstrapper(shellExecutablePath: fakeShell.path)
-        let session = try await bootstrapper.createSession(
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            shellExecutablePath: fakeShell.path
+        )
+        let session = try await transport.createSession(
             name: "claude-work",
             workingDirectory: "/tmp/work tree"
         )
@@ -110,7 +113,7 @@ import Testing
         #expect(invocations[0].hasSuffix("-s claude-work -c /tmp/work tree"))
     }
 
-    @Test func localPrimaryBootstrapDefaultsImplicitWorkingDirectoryToHome() async throws {
+    @Test func localPrimaryDefaultsImplicitWorkingDirectoryToHome() async throws {
         let root = try temporaryDirectory(prefix: "local-tmux-bootstrap-home")
         defer { try? FileManager.default.removeItem(at: root) }
         let invocationLog = root.appendingPathComponent("invocations.log")
@@ -124,11 +127,12 @@ import Testing
             """
         )
 
-        let bootstrapper = LocalTmuxServerBootstrapper(
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
             shellExecutablePath: fakeShell.path,
             defaultWorkingDirectory: "/Users/tester"
         )
-        _ = try await bootstrapper.createSession(name: nil, workingDirectory: nil)
+        _ = try await transport.createSession(name: nil, workingDirectory: nil)
 
         let invocation = try String(contentsOf: invocationLog, encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -181,6 +185,43 @@ import Testing
         #expect(invocations[1].contains("-s home-work -c /Users/tester"))
     }
 
+    @Test func localTransportDiscoveryCreatesFirstSessionInHomeDirectory() async throws {
+        let root = try temporaryDirectory(prefix: "local-tmux-direct-discovery")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let invocationLog = root.appendingPathComponent("invocations.log")
+        let serverState = root.appendingPathComponent("server-exists")
+        let fakeShell = root.appendingPathComponent("fake-shell")
+        try writeExecutable(
+            at: fakeShell,
+            contents: """
+            #!/bin/sh
+            printf '%s\n' "$*" >> '\(invocationLog.path)'
+            case " $* " in
+              *" display-message "*)
+                if [ -f '\(serverState.path)' ]; then printf 'tmux 3.4\n'; else printf 'no server running\n' >&2; exit 1; fi ;;
+              *" -V "*) printf 'tmux 3.4\n' ;;
+              *" list-sessions "*)
+                if [ -f '\(serverState.path)' ]; then printf '$9:1:0:125:home-work\n'; else printf 'no server running\n' >&2; exit 1; fi ;;
+              *" new-session "*) touch '\(serverState.path)' ;;
+            esac
+            """
+        )
+
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            shellExecutablePath: fakeShell.path,
+            defaultWorkingDirectory: "/Users/tester"
+        )
+        let sessions = try await transport.discoverMirrorSessions(createIfEmpty: true)
+
+        #expect(sessions.map(\.name) == ["home-work"])
+        let invocations = try String(contentsOf: invocationLog, encoding: .utf8)
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+        #expect(invocations.allSatisfy { !$0.contains("ssh") })
+        #expect(invocations.contains { $0.hasSuffix("new-session -d -c /Users/tester") })
+    }
+
     @Test func localTransportBuildsDirectControlInvocationWithSanitizedEnvironment() {
         let transport = LocalTmuxTransport(
             host: RemoteTmuxController.localPrimaryHost,
@@ -199,7 +240,8 @@ import Testing
         )
 
         #expect(transport.kind == .local)
-        #expect(invocation.executablePath == "/test/bin/sh")
+        #expect(invocation.executablePath == "/usr/bin/script")
+        #expect(invocation.arguments.prefix(3) == ["-q", "/dev/null", "/test/bin/sh"])
         #expect(invocation.arguments.suffix(4) == ["-CC", "attach-session", "-t", "work tree"])
         #expect(invocation.environment?["TMUX"] == nil)
         #expect(invocation.environment?["TMUX_PANE"] == nil)
@@ -217,7 +259,13 @@ import Testing
     }
 
     @Test @MainActor func directLocalControlStreamAttachesToRealTmux() async throws {
-        let root = try temporaryDirectory(prefix: "local-tmux-direct-control")
+        // tmux's socket path is also subject to macOS's short AF_UNIX limit, so
+        // use a deliberately compact root instead of XCTest's long temp path.
+        let root = URL(
+            fileURLWithPath: "/tmp/cmux-direct-\(String(UUID().uuidString.prefix(8)))",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         var environment = ProcessInfo.processInfo.environment
         environment["TMUX_TMPDIR"] = root.path

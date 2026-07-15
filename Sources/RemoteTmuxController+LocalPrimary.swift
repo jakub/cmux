@@ -43,11 +43,11 @@ extension RemoteTmuxController {
         let host = Self.localPrimaryHost
         let transport = transport(for: host)
         try await transport.assertMinimumTmuxVersion(checkClientWhenNoServer: true)
-        let session = try await localTmuxServerBootstrapper.createSession(
+        let session = try await transport.createSession(
             name: title,
             workingDirectory: workingDirectory
         )
-        try await ensureControlMasterReadyForBurst(host: host)
+        try await ensureControlTransportReadyForBurst(host: host)
         try Task.checkCancellation()
         _ = mirrorDiscoveredSessions(host: host, sessions: [session], into: tabManager)
         guard let mirror = sessionMirrors.values.first(where: { mirror in
@@ -137,7 +137,7 @@ extension RemoteTmuxController {
         var preferredSession = localPrimaryRuntime.pendingPreferredSession
         if sessions.isEmpty || localPrimaryRuntime.shouldCreateRequestedSession {
             try await transport.assertMinimumTmuxVersion(checkClientWhenNoServer: true)
-            let session = try await localTmuxServerBootstrapper.createSession(
+            let session = try await transport.createSession(
                 name: localPrimaryRuntime.shouldCreateRequestedSession ? localPrimaryRuntime.requestedSessionName : nil,
                 workingDirectory: localPrimaryRuntime.shouldCreateRequestedSession
                     ? localPrimaryRuntime.requestedWorkingDirectory
@@ -151,7 +151,7 @@ extension RemoteTmuxController {
         if preferredSession == nil {
             preferredSession = sessions.first
         }
-        try await ensureControlMasterReadyForBurst(host: host)
+        try await ensureControlTransportReadyForBurst(host: host)
         try Task.checkCancellation()
 
         let nativeTerminalWorkspaceIDs = Set(tabManager.tabs.compactMap { workspace -> UUID? in

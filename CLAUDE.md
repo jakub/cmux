@@ -127,9 +127,10 @@ For iOS dev auth, `ios/scripts/reload.sh` and `scripts/mobile-dev-launch.sh` aut
 ## Local tmux primary experiment
 
 Commit `b0e3566a7` adds an opt-in macOS mode in which localhost tmux sessions are
-the source of truth for terminal workspaces. The current implementation uses
-the existing remote-tmux stack over `ssh localhost`; it does not talk directly
-to the tmux socket yet.
+the source of truth for terminal workspaces. The direct-backend follow-up on
+`codex/local-tmux-direct` keeps the remote-tmux protocol/parser but runs the
+local `tmux` CLI and `tmux -CC` control clients directly. It does not use
+`ssh localhost`, and it does not implement tmux's private socket protocol.
 
 The important ownership split is:
 
@@ -137,14 +138,25 @@ The important ownership split is:
   state and coalescing task.
 - `Sources/RemoteTmuxController+LocalPrimary.swift` discovers or creates localhost
   sessions, mirrors them into cmux workspaces, and reconciles tmux changes.
-- `Sources/LocalTmuxServerBootstrapper.swift` is the one exception to the SSH
-  transport: it creates new localhost sessions directly from the cmux GUI
-  process. Do not move session creation back under `ssh localhost`; a tmux server
-  born under `sshd` cannot access login-keychain credentials noninteractively,
-  and every pane it later spawns inherits that restriction. Discovery, version
-  checks, control mode, and mutations after creation still use SSH. When no cwd
-  is requested, the bootstrapper must pass the user's home directory explicitly;
-  the app process may have `/` as its cwd, and tmux otherwise inherits it.
+- `Sources/RemoteTmuxTransport.swift` is the shared command/control boundary.
+  `RemoteTmuxSSHTransport` remains authoritative for real remote endpoints;
+  `LocalTmuxTransport` owns every localhost operation while local-primary mode is
+  enabled: discovery, version checks, session creation, mutations, and control
+  mode. Do not special-case these operations back into the controller.
+- `Sources/LocalTmuxTransport.swift` launches from the cmux GUI security context,
+  so a new tmux server inherits access to the user's unlocked login keychain.
+  It removes ambient `TMUX` and `TMUX_PANE` from every child so launching cmux
+  inside another tmux client cannot accidentally target the parent server, while
+  preserving an explicit `TMUX_TMPDIR` for test isolation. When no cwd is
+  requested, it passes the user's home directory explicitly; the app process may
+  have `/` as its cwd, and tmux otherwise inherits it.
+- `RemoteTmuxControlConnection` receives its transport at construction and uses
+  that same backend for initial attach and reconnect. Local control clients run
+  the resolver as `/bin/sh -c ... tmux -CC` under macOS's quiet `script(1)`
+  wrapper. The wrapper supplies the pseudo-terminal that tmux control mode
+  requires (`tcgetattr(3)` rejects plain pipes); it is not an SSH hop. Remote
+  control clients retain the existing SSH ControlMaster invocation. Local image
+  paste stays local and must never synthesize an `scp localhost` upload target.
 - Local-primary cmux routing identity is pane-scoped. The session mirror publishes
   `@cmux_workspace_id` and `@cmux_surface_id` as tmux pane options, and the Claude
   wrapper recovers the four workspace/tab/surface/panel environment variables
@@ -162,11 +174,11 @@ The important ownership split is:
 - Native terminal fallback is intentionally disabled while this mode is active.
   App termination detaches from tmux and leaves the server-side sessions running.
 
-Use the stable tag `local-tmux-primary` while working on this patch:
+Use the stable tag `local-tmux-direct` while working on this follow-up:
 
 ```bash
-./scripts/reload.sh --tag local-tmux-primary
-CMUX_TAG=local-tmux-primary scripts/cmux-debug-cli.sh list-workspaces
+./scripts/reload.sh --tag local-tmux-direct
+CMUX_TAG=local-tmux-direct scripts/cmux-debug-cli.sh list-workspaces
 ```
 
 The full Debug bundle includes two different Ghostty artifacts:
@@ -190,7 +202,7 @@ and point `CMUX_ZIG` at the same binary:
 export CMUX_ZIG=/absolute/path/to/zig-0.15.2
 export PATH="$(dirname "$CMUX_ZIG"):$PATH"
 zig version  # must print 0.15.2
-./scripts/reload.sh --tag local-tmux-primary
+./scripts/reload.sh --tag local-tmux-direct
 ```
 
 As verified on 2026-07-14, that exact Zig still cannot build the helper against
@@ -203,24 +215,24 @@ For local tmux work, a valid cached GhosttyKit may be reused while intentionally
 skipping only the CLI helper:
 
 ```bash
-CMUX_SKIP_ZIG_BUILD=1 ./scripts/reload.sh --tag local-tmux-primary
+CMUX_SKIP_ZIG_BUILD=1 ./scripts/reload.sh --tag local-tmux-direct
 ```
 
 The known-working build command on this machine is:
 
 ```bash
-CMUX_GHOSTTYKIT_CACHE_DIR=/tmp/cmux-ghosttykit-cache-local-tmux-primary \
+CMUX_GHOSTTYKIT_CACHE_DIR=/tmp/cmux-ghosttykit-cache-local-tmux-direct \
   CMUX_SKIP_ZIG_BUILD=1 \
-  ./scripts/reload.sh --tag local-tmux-primary
+  ./scripts/reload.sh --tag local-tmux-direct
 ```
 
 The isolated cache path is useful when other cmux checkouts or agents may be
 building concurrently. It must contain (or point to) a valid GhosttyKit cache;
 otherwise omit `CMUX_GHOSTTYKIT_CACHE_DIR` and let `ensure-ghosttykit.sh` use the
-normal shared cache. This command last succeeded in 46 seconds and produced:
+normal shared cache. This command produces:
 
 ```text
-/Users/jakub/Library/Developer/Xcode/DerivedData/cmux-local-tmux-primary/Build/Products/Debug/cmux DEV local-tmux-primary.app
+/Users/jakub/Library/Developer/Xcode/DerivedData/cmux-local-tmux-direct/Build/Products/Debug/cmux DEV local-tmux-direct.app
 ```
 
 This produces a real cmux app with the real cached GhosttyKit, but installs a
@@ -248,18 +260,23 @@ swift test --package-path Packages/macOS/CmuxSettingsUI
 
 xcodebuild -project cmux.xcodeproj -scheme cmux-unit -configuration Debug \
   -destination 'platform=macOS' \
-  -derivedDataPath /tmp/cmux-local-tmux-primary-tests \
+  -derivedDataPath /tmp/cmux-local-tmux-direct-tests \
   CMUX_SKIP_ZIG_BUILD=1 \
   'OTHER_SWIFT_FLAGS=$(inherited) -Xllvm -aarch64-enable-global-isel-at-O=-1' \
+  -parallel-testing-enabled NO \
   test \
   -only-testing:cmuxTests/RemoteTmuxAuthTests \
+  -only-testing:cmuxTests/RemoteTmuxMissingTmuxTests \
+  -only-testing:cmuxTests/RemoteTmuxMasterReadinessTests \
+  -only-testing:cmuxTests/RemoteTmuxCapabilitiesTests \
   -only-testing:cmuxTests/RemoteTmuxMirrorTargetingTests \
   -only-testing:cmuxTests/RemoteTmuxNewWindowCwdTests
 ```
 
-The last verified focused run passed 67 tests. The patch also adds 22 localized
-strings; English and Japanese values were audited, and the string catalog was
-compiled by the app test target.
+The last verified focused run passed 84 tests (112 parameterized test cases).
+The underlying local-primary patch also adds 22 localized strings; English and
+Japanese values were audited, and the string catalog was compiled by the app
+test target. The direct-transport follow-up adds no user-facing strings.
 
 ## Regression test commit policy
 

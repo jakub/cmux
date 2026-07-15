@@ -4,7 +4,7 @@ import OSLog
 
 /// Coordinates cmux's mirroring of remote tmux servers.
 ///
-/// Owns one ``RemoteTmuxSSHTransport`` per endpoint (keyed by
+/// Owns one ``RemoteTmuxTransport`` per endpoint (keyed by
 /// ``RemoteTmuxHost/connectionHash`` — destination + port + identity) and
 /// is the entry point the socket/CLI layer and (later) the UI call into. It is
 /// `@MainActor` because it will own sidebar/workspace state as the feature
@@ -21,9 +21,8 @@ final class RemoteTmuxController {
     /// ControlMaster that couldn't be confirmed ready before the attach burst.
     nonisolated static let logger = Logger(subsystem: "com.cmuxterm.app", category: "RemoteTmux")
 
-    /// Per-endpoint SSH transports (keyed by ``RemoteTmuxHost/connectionHash``),
-    /// owned by ``RemoteTmuxController`` and delegated to for discovery + master teardown.
-    let transportRegistry = RemoteTmuxTransportRegistry()
+    /// Per-endpoint transports (keyed by ``RemoteTmuxHost/connectionHash``).
+    let transportRegistry: RemoteTmuxTransportRegistry
 
     /// Live `tmux -CC` control connections keyed by `connectionHash\u{1}session`
     /// (see ``connectionKey(host:sessionName:)``), so repeated attach requests for
@@ -33,16 +32,14 @@ final class RemoteTmuxController {
 
     nonisolated static let localPrimaryHost = RemoteTmuxHost(destination: "localhost")
     let localPrimaryRuntime: LocalTmuxPrimaryRuntime
-    let localTmuxServerBootstrapper: LocalTmuxServerBootstrapper
 
     var localPrimaryEnabled: Bool { localPrimaryRuntime.isEnabled }
 
-    init(
-        localPrimaryEnabled: Bool = RemoteTmuxController.isLocalPrimaryEnabled,
-        localTmuxServerBootstrapper: LocalTmuxServerBootstrapper = LocalTmuxServerBootstrapper()
-    ) {
+    init(localPrimaryEnabled: Bool = RemoteTmuxController.isLocalPrimaryEnabled) {
         localPrimaryRuntime = LocalTmuxPrimaryRuntime(isEnabled: localPrimaryEnabled)
-        self.localTmuxServerBootstrapper = localTmuxServerBootstrapper
+        transportRegistry = RemoteTmuxTransportRegistry(
+            directLocalHost: localPrimaryEnabled ? Self.localPrimaryHost : nil
+        )
     }
 
     /// Makes local-primary mode the default for tagged development builds while
@@ -91,7 +88,7 @@ final class RemoteTmuxController {
     }
 
     /// Returns (creating if needed) the transport for a host.
-    func transport(for host: RemoteTmuxHost) -> RemoteTmuxSSHTransport {
+    func transport(for host: RemoteTmuxHost) -> any RemoteTmuxTransport {
         transportRegistry.transport(for: host)
     }
 
@@ -100,15 +97,14 @@ final class RemoteTmuxController {
         try await transport(for: host).listSessions()
     }
 
-    /// Tears down a host's shared SSH master (used when removing a host).
+    /// Tears down a host's transport (used when removing a host).
     func disconnect(host: RemoteTmuxHost) async {
-        await transportRegistry.disconnectMaster(host: host)
+        await transportRegistry.disconnect(host: host)
     }
 
-    /// Warms and confirms the host's shared SSH ControlMaster before a per-session
-    /// `tmux -CC attach` burst (the single shared gate for every bulk-mirror
-    /// entrypoint), so the `ControlMaster=auto` attaches ride a ready master instead
-    /// of racing to create it on a cold first attach (#6732).
+    /// Prepares the endpoint before a per-session `tmux -CC attach` burst. SSH
+    /// confirms its shared ControlMaster so parallel attaches cannot race to create
+    /// it (#6732); direct local tmux needs no warmup and returns immediately.
     ///
     /// Fails closed: an unconfirmed master throws rather than firing the burst into
     /// the exact cold-master race the gate prevents. Callers invoke this *before*
@@ -116,12 +112,12 @@ final class RemoteTmuxController {
     /// user can re-attach once the master is warm. The common cold start still
     /// returns `true` (the warmup's single-creator open succeeds), so only the
     /// genuinely-unready case is blocked.
-    func ensureControlMasterReadyForBurst(host: RemoteTmuxHost) async throws {
-        let ready = try await transport(for: host).ensureMasterReady()
-        // The warmup's SSH work runs in a shared unstructured task and isn't
-        // cancellation-aware, so a caller cancelled meanwhile (e.g. a v2VmCall
-        // timeout) only learns of it here — bail before treating not-ready as a hard
-        // failure and before the caller's next irreversible step.
+    func ensureControlTransportReadyForBurst(host: RemoteTmuxHost) async throws {
+        let transport = transport(for: host)
+        let ready = try await transport.prepareForControlBurst()
+        // SSH warmup is shared across callers, so cancellation can arrive while it
+        // completes. Re-check before the caller's next irreversible step. The local
+        // transport reaches this point synchronously with `ready == true`.
         try Task.checkCancellation()
         guard ready else {
             // Log the non-sensitive connection hash, not the SSH destination (which
@@ -146,15 +142,15 @@ final class RemoteTmuxController {
         let key = Self.connectionKey(host: host, sessionName: sessionName)
         if let existing = connectionsByHostSession[key] {
             if !existing.exited { return existing }
-            // Replace a dead connection — fully tear down the old one first so
-            // its ssh process, stdin fd, stream continuation and ingest task
-            // don't leak.
+            // Replace a dead connection — fully tear down the old child process,
+            // stdin fd, stream continuation and ingest task first.
             removeCachedConnection(forKey: key)?.stop()
         }
         let connection = RemoteTmuxControlConnection(
             host: host,
             sessionName: sessionName,
-            createIfMissing: createIfMissing
+            createIfMissing: createIfMissing,
+            transport: transport(for: host)
         )
         // Insert only after a successful launch, so a failed `start()` never
         // leaves a dead (never-started, `exited == false`) connection that a
@@ -279,7 +275,8 @@ final class RemoteTmuxController {
             if existing.succeeded {
                 return nil
             }
-            if let sshArgv = Self.authRequiredAttachArgv(host: host, result: existing) {
+            if transport.kind == .ssh,
+               let sshArgv = Self.authRequiredAttachArgv(host: host, result: existing) {
                 return sshArgv
             }
 
@@ -289,14 +286,16 @@ final class RemoteTmuxController {
 
             let created = try await transport.runTmux(["new-session", "-d", "-s", sessionName])
             guard created.succeeded else {
-                if let sshArgv = Self.authRequiredAttachArgv(host: host, result: created) {
+                if transport.kind == .ssh,
+                   let sshArgv = Self.authRequiredAttachArgv(host: host, result: created) {
                     return sshArgv
                 }
                 throw RemoteTmuxError.commandFailed(exitCode: created.exitCode, stderr: created.stderr)
             }
             return nil
         } catch let error as RemoteTmuxError {
-            if case .commandFailed(_, let stderr) = error,
+            if transport.kind == .ssh,
+               case .commandFailed(_, let stderr) = error,
                RemoteTmuxSSHTransport.indicatesInteractiveRetryWillHelp(stderr) {
                 return host.interactiveAuthInvocation()
             }
@@ -496,6 +495,7 @@ final class RemoteTmuxController {
     func remoteUploadTarget(forSurfaceId surfaceId: UUID) -> TerminalRemoteUploadTarget? {
         for sessionMirror in sessionMirrors.values
         where !sessionMirror.connection.exited && sessionMirror.ownsSurface(surfaceId) {
+            guard sessionMirror.connection.transportKind == .ssh else { return nil }
             return .detectedSSH(sessionMirror.host.detectedSSHSession())
         }
         return nil
@@ -639,8 +639,7 @@ final class RemoteTmuxController {
             let hostHasOtherConnections = connectionsByHostSession.values
                 .contains { $0.host.connectionHash == host.connectionHash }
             if !hostHasOtherConnections {
-                transportRegistry.remove(connectionHash: host.connectionHash)
-                RemoteTmuxSSHTransport.spawnControlMasterExit(host: host)
+                transportRegistry.remove(connectionHash: host.connectionHash)?.spawnShutdown()
             }
         }
         #if DEBUG
@@ -685,15 +684,13 @@ final class RemoteTmuxController {
             removeCachedConnection(forKey: key)?.stop()
         }
         // For any host left with no live mirror or connection, close its shared SSH
-        // ControlMaster now — the last-session teardown paths already do this, and
-        // a window close must too or the master lingers for the full
-        // ControlPersist window.
-        for (hash, host) in affectedHosts {
+        // Shut down any endpoint transport left unused by the window close. This
+        // exits an SSH ControlMaster; the direct local transport deliberately no-ops.
+        for (hash, _) in affectedHosts {
             let stillUsed = sessionMirrors.values.contains { $0.host.connectionHash == hash }
                 || connectionsByHostSession.values.contains { $0.host.connectionHash == hash }
             if !stillUsed {
-                transportRegistry.remove(connectionHash: hash)
-                RemoteTmuxSSHTransport.spawnControlMasterExit(host: host)
+                transportRegistry.remove(connectionHash: hash)?.spawnShutdown()
             }
         }
     }
@@ -711,10 +708,10 @@ final class RemoteTmuxController {
 
     /// App-quit path for a tab/session close of a remote window's LAST tab: tears down
     /// each marked window's mirror sessions on the MainActor, then AWAITS killing them
-    /// (bounded by `timeout`) so the session is gone before cmux exits. No
-    /// `spawnControlMasterExit` — the kill multiplexes over the live master (ControlPersist reaps it).
+    /// (bounded by `timeout`) so the session is gone before cmux exits. The kill
+    /// uses whichever transport owns the mirror.
     func killMarkedSessionsBeforeTerminate(timeout: Duration = .seconds(3)) async {
-        var jobs: [(transport: RemoteTmuxSSHTransport, target: String)] = []
+        var jobs: [(transport: any RemoteTmuxTransport, target: String)] = []
         for windowId in windowRegistry.windowsMarkedForKillOnClose() {
             guard windowRegistry.consumeKillSessionsOnClose(windowId: windowId) else { continue }
             let closingWorkspaceIds = Set(AppDelegate.shared?.tabManagerFor(windowId: windowId)?.tabs.map(\.id) ?? [])
@@ -734,7 +731,7 @@ final class RemoteTmuxController {
                 }
             }
         }
-        await RemoteTmuxSSHTransport.killSessions(jobs, timeout: timeout)
+        await Self.killSessions(jobs, timeout: timeout)
     }
 
     func detachMirrorWorkspaceKeptOpenLocally(workspaceId: UUID) {
@@ -744,7 +741,10 @@ final class RemoteTmuxController {
         entry.value.detachObserver()
         removeCachedConnection(forKey: entry.key)?.stop()
         let hostHasOtherMirrors = sessionMirrors.values.contains { $0.host.connectionHash == host.connectionHash }
-        if !hostHasOtherMirrors, !connectionsByHostSession.values.contains(where: { $0.host.connectionHash == host.connectionHash }) { transportRegistry.remove(connectionHash: host.connectionHash); RemoteTmuxSSHTransport.spawnControlMasterExit(host: host) }
+        if !hostHasOtherMirrors,
+           !connectionsByHostSession.values.contains(where: { $0.host.connectionHash == host.connectionHash }) {
+            transportRegistry.remove(connectionHash: host.connectionHash)?.spawnShutdown()
+        }
     }
 
     /// User-initiated mirrored workspace close detaches locally and kills the remote session.
@@ -769,17 +769,15 @@ final class RemoteTmuxController {
         let isLastSession = !sessionMirrors.values.contains(where: { $0.host.connectionHash == host.connectionHash })
         let transport = transport(for: host)
         if isLastSession {
-            // Drop the transport so a later re-attach builds a fresh one instead of
-            // reusing this soon-to-be-dead master.
+            // Drop the transport so a later re-attach builds a fresh endpoint.
             transportRegistry.remove(connectionHash: host.connectionHash)
         }
         Task {
             if let killTarget {
                 _ = try? await transport.runTmux(["kill-session", "-t", killTarget])
             }
-            // Close the master only after any kill-session attempt has used it;
-            // `ssh -O exit` first would tear the connection down before the
-            // session dies. The no-kill detach cleanup still exits the master here.
+            // Shut the transport down only after any kill-session attempt has used
+            // it. For direct local tmux this is intentionally a no-op.
             if isLastSession {
                 // …and only if no reattach reclaimed this endpoint during the kill
                 // round-trip (a concurrent `cmux ssh-tmux` rebuilds on the same
@@ -788,7 +786,7 @@ final class RemoteTmuxController {
                     || sessionMirrors.values.contains { $0.host.connectionHash == host.connectionHash }
                     || connectionsByHostSession.values.contains { $0.host.connectionHash == host.connectionHash }
                 if !reclaimed {
-                    RemoteTmuxSSHTransport.spawnControlMasterExit(host: host)
+                    transport.spawnShutdown()
                 }
             }
         }
@@ -816,33 +814,49 @@ final class RemoteTmuxController {
             let hostHasOtherMirrors = sessionMirrors.values.contains { $0.host.connectionHash == host.connectionHash }
             if !hostHasOtherMirrors,
                !connectionsByHostSession.values.contains(where: { $0.host.connectionHash == host.connectionHash }) {
-                transportRegistry.remove(connectionHash: host.connectionHash)
-                RemoteTmuxSSHTransport.spawnControlMasterExit(host: host)
+                transportRegistry.remove(connectionHash: host.connectionHash)?.spawnShutdown()
             }
             return
         }
         removeCachedConnection(forKey: key)?.stop()
     }
 
-    /// Detaches every control connection on app quit and closes the shared SSH
-    /// ControlMasters, so quitting cmux closes the ssh connections it opened (the
-    /// CLI's `ssh -f` left them persistent). Does NOT kill any remote tmux
-    /// server/session — only the local control clients and masters.
+    /// Detaches every control connection on app quit. SSH transports close their
+    /// shared ControlMasters; direct local tmux leaves its server and sessions alive.
     func detachAll() {
         localPrimaryRuntime.reset()
         let connections = Array(connectionsByHostSession.keys).compactMap { removeCachedConnection(forKey: $0) }
         for connection in connections { connection.stop() }
-        // Fire-and-forget `ssh -O exit` per endpoint: it hits the local control
-        // socket and runs independently of cmux, so the masters are torn down even as
-        // the app exits — no lingering ssh after quit. Collect endpoints from BOTH
-        // transports AND control connections (the remote.tmux.attach path opens a
-        // ControlPersist master via the connection without ever creating a transport),
-        // deduped by connectionHash.
-        var hostsByHash: [String: RemoteTmuxHost] = [:]
-        for connection in connections { hostsByHash[connection.host.connectionHash] = connection.host }
-        for host in transportRegistry.allHosts() { hostsByHash[host.connectionHash] = host }
-        transportRegistry.removeAll()
-        for host in hostsByHash.values { RemoteTmuxSSHTransport.spawnControlMasterExit(host: host) }
+        // SSH transports close their masters; the direct local transport is a no-op,
+        // leaving the user's tmux server and sessions alive.
+        for transport in transportRegistry.removeAll() {
+            transport.spawnShutdown()
+        }
+    }
+
+    /// Best-effort session kills used by the bounded app-termination path.
+    nonisolated private static func killSessions(
+        _ jobs: [(transport: any RemoteTmuxTransport, target: String)],
+        timeout: Duration
+    ) async {
+        guard !jobs.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                await withTaskGroup(of: Void.self) { kills in
+                    for job in jobs {
+                        kills.addTask {
+                            _ = try? await job.transport.runTmux([
+                                "kill-session", "-t", job.target,
+                            ])
+                        }
+                    }
+                    await kills.waitForAll()
+                }
+            }
+            group.addTask { try? await ContinuousClock().sleep(for: timeout) }
+            await group.next()
+            group.cancelAll()
+        }
     }
 
     /// The dictionary key for a control connection / session mirror, scoped to the

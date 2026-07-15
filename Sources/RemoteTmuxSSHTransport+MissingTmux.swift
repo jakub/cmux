@@ -1,5 +1,5 @@
-extension RemoteTmuxSSHTransport {
-    /// Whether a failed remote command failed because the host has no usable tmux.
+extension RemoteTmuxTransport {
+    /// Whether a failed command failed because the endpoint has no usable tmux.
     static func indicatesTmuxMissing(exitCode: Int32, stderr: String) -> Bool {
         guard exitCode == 127 else { return false }
         let lowered = stderr.lowercased()
@@ -9,7 +9,7 @@ extension RemoteTmuxSSHTransport {
             || lowered.contains("tmux: not found")
     }
 
-    /// Builds the domain error for a failed remote tmux command.
+    /// Builds the domain error for a failed tmux command.
     nonisolated func commandFailure(_ result: RemoteTmuxCommandResult) -> RemoteTmuxError {
         if Self.indicatesTmuxMissing(exitCode: result.exitCode, stderr: result.stderr) {
             return .tmuxNotFound(destination: host.destination)
