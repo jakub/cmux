@@ -316,7 +316,10 @@ import Testing
             .split(whereSeparator: \.isNewline)
             .map(String.init)
         #expect(invocations.allSatisfy { !$0.contains("ssh") })
-        #expect(invocations.contains { $0.hasSuffix("new-session -d -c /Users/tester") })
+        #expect(invocations.contains {
+            $0.contains("new-session -d -e OP_BIOMETRIC_UNLOCK_ENABLED=true")
+                && $0.hasSuffix("-c /Users/tester")
+        })
     }
 
     @Test func localTransportBuildsDirectControlInvocationWithSanitizedEnvironment() {

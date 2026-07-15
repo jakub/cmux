@@ -145,6 +145,10 @@ The important ownership split is:
   mode. Do not special-case these operations back into the controller.
 - `Sources/LocalTmuxTransport.swift` launches from the cmux GUI security context,
   so a new tmux server inherits access to the user's unlocked login keychain.
+  It defaults `OP_BIOMETRIC_UNLOCK_ENABLED=true` for the direct tmux client and
+  each newly created session so 1Password CLI uses the unlocked desktop app even
+  when the tmux server already exists. An explicit user value, including
+  `false`, is preserved.
   It removes ambient `TMUX` and `TMUX_PANE` from every child so launching cmux
   inside another tmux client cannot accidentally target the parent server, while
   preserving an explicit `TMUX_TMPDIR` for test isolation. When no cwd is

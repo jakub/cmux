@@ -24,6 +24,9 @@ actor LocalTmuxTransport: RemoteTmuxTransport {
         var sanitizedEnvironment = environment
         sanitizedEnvironment.removeValue(forKey: "TMUX")
         sanitizedEnvironment.removeValue(forKey: "TMUX_PANE")
+        if sanitizedEnvironment["OP_BIOMETRIC_UNLOCK_ENABLED"] == nil {
+            sanitizedEnvironment["OP_BIOMETRIC_UNLOCK_ENABLED"] = "true"
+        }
         self.environment = sanitizedEnvironment
         self.defaultWorkingDirectory = defaultWorkingDirectory
         self.processExecutor = processExecutor
@@ -83,9 +86,12 @@ actor LocalTmuxTransport: RemoteTmuxTransport {
     }
 
     nonisolated func startupForCreatedSession() -> RemoteTmuxSessionStartup {
+        var sessionEnvironment = [
+            "OP_BIOMETRIC_UNLOCK_ENABLED": environment["OP_BIOMETRIC_UNLOCK_ENABLED"] ?? "true",
+        ]
         guard let integrationDirectory = environment["CMUX_SHELL_INTEGRATION_DIR"],
               TerminalSurface.shellIntegrationDirectoryExists(integrationDirectory) else {
-            return RemoteTmuxSessionStartup()
+            return RemoteTmuxSessionStartup(environment: sessionEnvironment)
         }
 
         var startupEnvironment = environment
@@ -97,11 +103,11 @@ actor LocalTmuxTransport: RemoteTmuxTransport {
             to: &startupEnvironment,
             protectedKeys: &managedKeys
         )
-        let managedEnvironment = managedKeys.reduce(into: [String: String]()) { result, key in
+        for key in managedKeys {
             if let value = startupEnvironment[key] {
-                result[key] = value
+                sessionEnvironment[key] = value
             }
         }
-        return RemoteTmuxSessionStartup(environment: managedEnvironment, command: command)
+        return RemoteTmuxSessionStartup(environment: sessionEnvironment, command: command)
     }
 }
