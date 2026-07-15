@@ -21,6 +21,7 @@ if test "$_cmux_integration_enabled" != 0
     set -g _CMUX_TTY_NAME ""
     set -g _CMUX_TTY_REPORTED 0
     set -g _CMUX_PWD_LAST_PWD ""
+    set -g _CMUX_TMUX_PANE_CONTEXT_SIGNATURE ""
 
     function _cmux_now
         if test -n "$EPOCHSECONDS"
@@ -28,6 +29,27 @@ if test "$_cmux_integration_enabled" != 0
         else
             date +%s
         end
+    end
+
+    function _cmux_tmux_refresh_pane_context
+        set -q TMUX; and set -q TMUX_PANE; or return 0
+        command -sq tmux; or return 0
+
+        set -l context (tmux display-message -p -t "$TMUX_PANE" \
+            -F '#{@cmux_workspace_id}|#{@cmux_surface_id}' 2>/dev/null); or return 0
+        set -l identity (string split -m 1 '|' -- "$context")
+        test (count $identity) -eq 2; or return 0
+        test -n "$identity[1]"; and test -n "$identity[2]"; or return 0
+        test "$context" = "$_CMUX_TMUX_PANE_CONTEXT_SIGNATURE"; and return 0
+
+        set -gx CMUX_WORKSPACE_ID "$identity[1]"
+        set -gx CMUX_TAB_ID "$identity[1]"
+        set -gx CMUX_SURFACE_ID "$identity[2]"
+        set -gx CMUX_PANEL_ID "$identity[2]"
+        set -g _CMUX_TMUX_PANE_CONTEXT_SIGNATURE "$context"
+        set -g _CMUX_TTY_REPORTED 0
+        set -g _CMUX_SHELL_ACTIVITY_LAST ""
+        set -g _CMUX_PWD_LAST_PWD ""
     end
 
     function _cmux_socket_is_unix
@@ -286,12 +308,14 @@ if test "$_cmux_integration_enabled" != 0
     end
 
     function _cmux_preexec --on-event fish_preexec
+        _cmux_tmux_refresh_pane_context
         _cmux_report_tty_once
         _cmux_report_shell_activity_state running
         _cmux_ports_kick command
     end
 
     function _cmux_prompt --on-event fish_prompt
+        _cmux_tmux_refresh_pane_context
         _cmux_reset_terminal_keyboard_protocols
         _cmux_report_tty_once
         _cmux_report_shell_activity_state prompt

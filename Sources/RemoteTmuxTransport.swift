@@ -15,6 +15,12 @@ protocol RemoteTmuxTransport: Actor {
         createIfMissing: Bool
     ) -> RemoteTmuxProcessInvocation
     nonisolated func workingDirectoryForCreatedSession(_ requested: String?) -> String?
+    nonisolated func startupForCreatedSession() -> RemoteTmuxSessionStartup
+}
+
+struct RemoteTmuxSessionStartup: Equatable, Sendable {
+    var environment: [String: String] = [:]
+    var command: String? = nil
 }
 
 extension RemoteTmuxTransport {
@@ -41,9 +47,11 @@ extension RemoteTmuxTransport {
         if validatesVersionBeforeSessionCreation {
             try await assertMinimumTmuxVersion(checkClientWhenNoServer: true)
         }
+        let startup = startupForCreatedSession()
         let result = try await runTmux(Self.createSessionArguments(
             name: name,
-            workingDirectory: workingDirectoryForCreatedSession(workingDirectory)
+            workingDirectory: workingDirectoryForCreatedSession(workingDirectory),
+            startup: startup
         ))
         guard result.succeeded else { throw commandFailure(result) }
         guard let session = RemoteTmuxSessionListParser.parse(result.stdout).first else {
@@ -62,20 +70,34 @@ extension RemoteTmuxTransport {
         requested
     }
 
-    static func createSessionArguments(name: String?, workingDirectory: String?) -> [String] {
-        var arguments = [
-            "new-session",
-            "-d",
-            "-P",
-            "-F",
-            RemoteTmuxSessionListParser.formatString,
-        ]
+    nonisolated func startupForCreatedSession() -> RemoteTmuxSessionStartup {
+        RemoteTmuxSessionStartup()
+    }
+
+    static func createSessionArguments(
+        name: String?,
+        workingDirectory: String?,
+        startup: RemoteTmuxSessionStartup = RemoteTmuxSessionStartup(),
+        reportsIdentity: Bool = true
+    ) -> [String] {
+        var arguments = ["new-session", "-d"]
+        if reportsIdentity {
+            arguments += ["-P", "-F", RemoteTmuxSessionListParser.formatString]
+        }
+        for key in startup.environment.keys.sorted() {
+            guard let value = startup.environment[key] else { continue }
+            arguments += ["-e", "\(key)=\(value)"]
+        }
         if let name = name.flatMap(RemoteTmuxHost.controlModeCommandName) {
             arguments += ["-s", name]
         }
         if let workingDirectory = workingDirectory?.trimmingCharacters(in: .whitespacesAndNewlines),
            !workingDirectory.isEmpty {
             arguments += ["-c", workingDirectory]
+        }
+        if let command = startup.command?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !command.isEmpty {
+            arguments.append(command)
         }
         return arguments
     }
@@ -139,10 +161,12 @@ extension RemoteTmuxTransport {
         try await assertMinimumTmuxVersion(checkClientWhenNoServer: createIfEmpty)
         var sessions = try await listSessions()
         if sessions.isEmpty, createIfEmpty {
-            var arguments = ["new-session", "-d"]
-            if let workingDirectory = workingDirectoryForCreatedSession(nil) {
-                arguments += ["-c", workingDirectory]
-            }
+            let arguments = Self.createSessionArguments(
+                name: nil,
+                workingDirectory: workingDirectoryForCreatedSession(nil),
+                startup: startupForCreatedSession(),
+                reportsIdentity: false
+            )
             _ = try? await runTmux(arguments)
             sessions = try await listSessions()
         }

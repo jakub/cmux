@@ -373,6 +373,7 @@ _CMUX_TTY_NAME="${_CMUX_TTY_NAME:-}"
 _CMUX_TTY_REPORTED="${_CMUX_TTY_REPORTED:-0}"
 _CMUX_TMUX_PUSH_SIGNATURE="${_CMUX_TMUX_PUSH_SIGNATURE:-}"
 _CMUX_TMUX_PULL_SIGNATURE="${_CMUX_TMUX_PULL_SIGNATURE:-}"
+_CMUX_TMUX_PANE_CONTEXT_SIGNATURE="${_CMUX_TMUX_PANE_CONTEXT_SIGNATURE:-}"
 _CMUX_TMUX_SYNC_KEYS=(
     CMUX_BUNDLED_CLI_PATH
     CMUX_BUNDLE_ID
@@ -444,6 +445,18 @@ _cmux_tmux_publish_cmux_environment() {
     _CMUX_TMUX_PUSH_SIGNATURE="$signature"
 }
 
+_cmux_tmux_context_did_change() {
+    _CMUX_TTY_REPORTED=0
+    _CMUX_SHELL_ACTIVITY_LAST=""
+    _CMUX_PWD_LAST_PWD=""
+    _CMUX_GIT_LAST_PWD=""
+    _CMUX_GIT_HEAD_LAST_PWD=""
+    _CMUX_GIT_HEAD_PATH=""
+    _CMUX_GIT_HEAD_SIGNATURE=""
+    _CMUX_PR_FORCE=1
+    _cmux_stop_pr_poll_loop
+}
+
 _cmux_tmux_refresh_cmux_environment() {
     [[ -n "$TMUX" ]] || return 0
     command -v tmux >/dev/null 2>&1 || return 0
@@ -475,21 +488,35 @@ _cmux_tmux_refresh_cmux_environment() {
 
     _CMUX_TMUX_PULL_SIGNATURE="$filtered"
     if (( did_change )); then
-        _CMUX_TTY_REPORTED=0
-        _CMUX_SHELL_ACTIVITY_LAST=""
-        _CMUX_PWD_LAST_PWD=""
-        _CMUX_GIT_LAST_PWD=""
-        _CMUX_GIT_HEAD_LAST_PWD=""
-        _CMUX_GIT_HEAD_PATH=""
-        _CMUX_GIT_HEAD_SIGNATURE=""
-        _CMUX_PR_FORCE=1
-        _cmux_stop_pr_poll_loop
+        _cmux_tmux_context_did_change
     fi
+}
+
+_cmux_tmux_refresh_pane_context() {
+    [[ -n "$TMUX" && -n "$TMUX_PANE" ]] || return 0
+    command -v tmux >/dev/null 2>&1 || return 0
+
+    local context workspace_id surface_id
+    context="$(tmux display-message -p -t "$TMUX_PANE" \
+        -F '#{@cmux_workspace_id}|#{@cmux_surface_id}' 2>/dev/null)" || return 0
+    [[ "$context" == *"|"* ]] || return 0
+    workspace_id="${context%%|*}"
+    surface_id="${context#*|}"
+    [[ -n "$workspace_id" && -n "$surface_id" ]] || return 0
+    [[ "$context" == "$_CMUX_TMUX_PANE_CONTEXT_SIGNATURE" ]] && return 0
+
+    export CMUX_WORKSPACE_ID="$workspace_id"
+    export CMUX_TAB_ID="$workspace_id"
+    export CMUX_SURFACE_ID="$surface_id"
+    export CMUX_PANEL_ID="$surface_id"
+    _CMUX_TMUX_PANE_CONTEXT_SIGNATURE="$context"
+    _cmux_tmux_context_did_change
 }
 
 _cmux_tmux_sync_cmux_environment() {
     if [[ -n "$TMUX" ]]; then
         _cmux_tmux_refresh_cmux_environment
+        _cmux_tmux_refresh_pane_context
     else
         _cmux_tmux_publish_cmux_environment
     fi

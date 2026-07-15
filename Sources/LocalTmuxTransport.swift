@@ -1,3 +1,4 @@
+import CmuxTerminal
 import Foundation
 
 /// Talks to the user's local tmux server directly from cmux's GUI process.
@@ -79,5 +80,28 @@ actor LocalTmuxTransport: RemoteTmuxTransport {
     nonisolated func workingDirectoryForCreatedSession(_ requested: String?) -> String? {
         let trimmed = requested?.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed?.isEmpty == false ? trimmed : defaultWorkingDirectory
+    }
+
+    nonisolated func startupForCreatedSession() -> RemoteTmuxSessionStartup {
+        guard let integrationDirectory = environment["CMUX_SHELL_INTEGRATION_DIR"],
+              TerminalSurface.shellIntegrationDirectoryExists(integrationDirectory) else {
+            return RemoteTmuxSessionStartup()
+        }
+
+        var startupEnvironment = environment
+        var managedKeys: Set<String> = []
+        let command = TerminalSurface.applyManagedShellSpecificStartupEnvironment(
+            shell: environment["SHELL"] ?? "/bin/zsh",
+            integrationDir: integrationDirectory,
+            userGhosttyShellIntegrationMode: "none",
+            to: &startupEnvironment,
+            protectedKeys: &managedKeys
+        )
+        let managedEnvironment = managedKeys.reduce(into: [String: String]()) { result, key in
+            if let value = startupEnvironment[key] {
+                result[key] = value
+            }
+        }
+        return RemoteTmuxSessionStartup(environment: managedEnvironment, command: command)
     }
 }
