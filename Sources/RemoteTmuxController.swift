@@ -147,7 +147,6 @@ final class RemoteTmuxController {
             removeCachedConnection(forKey: key)?.stop()
         }
         let connection = RemoteTmuxControlConnection(
-            host: host,
             sessionName: sessionName,
             createIfMissing: createIfMissing,
             transport: transport(for: host)

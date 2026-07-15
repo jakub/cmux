@@ -81,7 +81,7 @@ import Testing
         let harness = try Harness()
         defer { harness.tearDown() }
         let host = RemoteTmuxHost(destination: "close-\(UUID().uuidString)@example.test")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: "dev")
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "dev")
         let controller = harness.appDelegate.remoteTmuxController
         defer {
             if controller.sessionMirror(host: host, sessionName: "dev") != nil {
@@ -146,7 +146,7 @@ import Testing
         let harness = try Harness()
         defer { harness.tearDown() }
         let host = RemoteTmuxHost(destination: "tab-close-\(UUID().uuidString)@example.test")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: "dev")
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "dev")
         let controller = harness.controller
         defer {
             if controller.sessionMirror(host: host, sessionName: "dev") != nil {
@@ -359,7 +359,7 @@ import Testing
         }
 
         func cacheConnection(host: RemoteTmuxHost, session: String) {
-            controller.cacheConnection(RemoteTmuxControlConnection(host: host, sessionName: session))
+            controller.cacheConnection(RemoteTmuxControlConnection(sshHost: host, sessionName: session))
         }
 
         func closeWindow(_ id: UUID) {

@@ -28,7 +28,7 @@ struct RemoteTmuxMirrorTargetingTests {
         host: RemoteTmuxHost,
         sessionName: String
     ) {
-        controller.cacheConnection(RemoteTmuxControlConnection(host: host, sessionName: sessionName))
+        controller.cacheConnection(RemoteTmuxControlConnection(sshHost: host, sessionName: sessionName))
     }
 
     @Test func localPrimaryEnablesTheRemoteTmuxEngineWithoutChangingRemotePreference() throws {
@@ -259,7 +259,7 @@ struct RemoteTmuxMirrorTargetingTests {
 
     @Test func programmaticMirrorReorderUpdatesTheTmuxWindowOrderLedger() throws {
         let host = RemoteTmuxHost(destination: "reorder-\(UUID().uuidString)@host")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "work")
         let pipe = Pipe()
         let writer = RemoteTmuxControlPipeWriter(
             handle: pipe.fileHandleForWriting,
@@ -527,7 +527,7 @@ struct RemoteTmuxMirrorTargetingTests {
             let manager = try #require(appDelegate.tabManagerFor(windowId: windowId))
             let controller = RemoteTmuxController()
             let host = RemoteTmuxHost(destination: "user@host")
-            let connection = RemoteTmuxControlConnection(host: host, sessionName: "dogfood-a")
+            let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "dogfood-a")
             let pipe = Pipe()
             let writer = RemoteTmuxControlPipeWriter(
                 handle: pipe.fileHandleForWriting, label: "remote-tmux-title-test", maxPendingBytes: 1 << 16, onFailure: {}

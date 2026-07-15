@@ -62,7 +62,7 @@ import Testing
         }
     ) -> (RemoteTmuxWindowMirror, RemoteTmuxControlConnection) {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
         let mirror = RemoteTmuxWindowMirror(
             windowId: 0,
@@ -236,7 +236,7 @@ import Testing
 
     @Test func bottomPaneTitleRowsRemainSizingChrome() {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
         let pipe = Pipe()
         let writer = RemoteTmuxControlPipeWriter(

@@ -13,7 +13,7 @@ import Testing
 @MainActor
 @Suite struct RemoteTmuxWindowMirrorFocusSeedTests {
     @Test func activePaneSeedsFromTmuxOnMirrorCreation() {
-        let connection = RemoteTmuxControlConnection(host: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
         connection.handleMessageForTesting(.windowPaneChanged(windowId: 1, paneId: 5))
 
         let mirror = RemoteTmuxWindowMirror(
@@ -29,7 +29,7 @@ import Testing
     }
 
     @Test func activePaneUpdatesFromTmuxAndReseedsOnReconcile() {
-        let connection = RemoteTmuxControlConnection(host: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
         let mirror = RemoteTmuxWindowMirror(
             windowId: 1,
             panelId: UUID(),
@@ -54,7 +54,7 @@ import Testing
         let workspace = manager.addWorkspace(select: false, autoWelcomeIfNeeded: false)
         workspace.isRemoteTmuxMirror = true
         let host = RemoteTmuxHost(destination: "user@host")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "work")
         let layout = Self.twoPaneLayout(left: 4, right: 5)
         connection.windowsByID[1] = RemoteTmuxWindow(
             id: 1,
@@ -91,7 +91,7 @@ import Testing
         let workspace = manager.addWorkspace(select: false, autoWelcomeIfNeeded: false)
         workspace.isRemoteTmuxMirror = true
         let host = RemoteTmuxHost(destination: "user@host")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "work")
         let layout = Self.twoPaneLayout(left: 4, right: 5)
         connection.windowsByID[1] = RemoteTmuxWindow(
             id: 1, name: "main", width: layout.width, height: layout.height, layout: layout
@@ -128,7 +128,7 @@ import Testing
         let workspace = manager.addWorkspace(select: false, autoWelcomeIfNeeded: false)
         workspace.isRemoteTmuxMirror = true
         let host = RemoteTmuxHost(destination: "user@host")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "work")
         let layout = Self.twoPaneLayout(left: 4, right: 5)
         connection.windowsByID[1] = RemoteTmuxWindow(
             id: 1,
@@ -170,7 +170,7 @@ import Testing
 
     @Test func noopImpositionKeepsTheFirstDividerDragRoutable() throws {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
         let layout = Self.twoPaneLayout(left: 4, right: 5)
         let container = CGSize(width: 800, height: 620)
@@ -223,7 +223,7 @@ import Testing
 
     @Test func nestedDividerDragUsesAppliedClampedAncestorExtent() throws {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
         let pipe = Pipe()
         let writer = RemoteTmuxControlPipeWriter(
@@ -331,7 +331,7 @@ import Testing
     @Test func logicallyVisibleDetachedPassWaitsForAHostBeforeCompleting() throws {
         var hostingBound: CGSize?
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
         let mirror = RemoteTmuxWindowMirror(
             windowId: 1,

@@ -24,7 +24,7 @@ struct RemoteTmuxSessionRenameTitleTests {
         let workspace = manager.addWorkspace(title: title, select: false, autoWelcomeIfNeeded: false)
         workspace.isRemoteTmuxMirror = true
         let host = RemoteTmuxHost(destination: "user@host")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: sessionName)
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: sessionName)
         let mirror = RemoteTmuxSessionMirror(
             host: host,
             sessionName: sessionName,

@@ -375,7 +375,7 @@ struct RemoteTmuxMirrorCLIObservabilityTests {
             }
 
             connection = RemoteTmuxControlConnection(
-                host: RemoteTmuxHost(destination: "user@host"),
+                sshHost: RemoteTmuxHost(destination: "user@host"),
                 sessionName: "work"
             )
             if connectedTransport {

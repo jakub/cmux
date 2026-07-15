@@ -16,7 +16,7 @@ import Testing
         pipe: Pipe
     ) {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
         let pipe = Pipe()
         let writer = RemoteTmuxControlPipeWriter(

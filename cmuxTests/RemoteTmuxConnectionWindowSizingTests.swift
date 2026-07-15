@@ -12,7 +12,7 @@ import Testing
 @Suite struct RemoteTmuxConnectionWindowSizingTests {
     private func makeConnection() -> RemoteTmuxControlConnection {
         RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
     }
 

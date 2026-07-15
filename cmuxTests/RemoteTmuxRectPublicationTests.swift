@@ -18,7 +18,7 @@ import Testing
         pipe: Pipe
     ) {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
         let pipe = Pipe()
         let writer = RemoteTmuxControlPipeWriter(
@@ -281,7 +281,7 @@ import Testing
 
     @Test func layoutWhileDisconnectedStaysQuarantinedWithoutSending() {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work"
         )
         // No writer, not connected: the fetch send fails. The raw tree must
         // stay quarantined (the reconnect's list-windows reseed re-stages it).

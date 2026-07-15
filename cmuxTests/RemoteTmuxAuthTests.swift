@@ -16,7 +16,7 @@ import Testing
 
     @Test @MainActor func sessionsChangedFansOutAndObserverRemovalStopsDelivery() {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"),
+            sshHost: RemoteTmuxHost(destination: "user@host"),
             sessionName: "dev"
         )
         var firstCount = 0
@@ -378,7 +378,6 @@ import Testing
             workingDirectory: nil
         )
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxController.localPrimaryHost,
             sessionName: session.name,
             transport: transport
         )
@@ -611,7 +610,7 @@ import Testing
     }
 
     @Test @MainActor func pastePaneRejectsDisconnectedControlStream() {
-        let connection = RemoteTmuxControlConnection(host: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
         #expect(connection.pastePane(paneId: 1, text: "/tmp/image.png") == false)
         #expect(connection.pastePane(paneId: 1, text: "") == false)
     }
@@ -620,7 +619,7 @@ import Testing
         // A documented `%session-renamed <name>` must still track the new name
         // (reused for reconnect) and fire the observer the mirror listens on.
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "old"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "old"
         )
         var observed: (old: String, new: String)?
         let token = connection.addObserver(onSessionChanged: { old, new in
@@ -638,7 +637,7 @@ import Testing
 
     @Test @MainActor func sessionRenamedUpdatesTrackedIdWhenTmuxSuppliesOne() {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "old"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "old"
         )
         connection.handleMessageForTesting(.sessionChanged(sessionId: 7, name: "old"))
 
@@ -650,7 +649,7 @@ import Testing
 
     @Test @MainActor func sessionRenamedIgnoresDifferentSessionId() {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "old"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "old"
         )
         connection.handleMessageForTesting(.sessionChanged(sessionId: 7, name: "old"))
         var observed: (old: String, new: String)?
@@ -668,7 +667,7 @@ import Testing
 
     @Test @MainActor func sessionRenamedIgnoresIdBearingRenameUntilSessionIdIsKnown() {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"), sessionName: "old"
+            sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "old"
         )
 
         connection.handleMessageForTesting(.sessionRenamed(sessionId: 7, name: "$7 dev", idBearingName: "dev"))
@@ -680,7 +679,7 @@ import Testing
     @Test @MainActor func controllerRekeysCachedConnectionWhenSessionIsRenamed() {
         let controller = RemoteTmuxController()
         let host = RemoteTmuxHost(destination: "user@host")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: "old")
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "old")
         controller.cacheConnection(connection)
 
         #expect(controller.connection(host: host, sessionName: "old") === connection)
@@ -692,7 +691,7 @@ import Testing
     }
 
     @Test @MainActor func attachBlockDrainQueuesInitialWindowRequest() {
-        let connection = RemoteTmuxControlConnection(host: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
         let pipe = Pipe()
         let writer = RemoteTmuxControlPipeWriter(
             handle: pipe.fileHandleForWriting,

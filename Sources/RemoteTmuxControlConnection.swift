@@ -254,15 +254,26 @@ final class RemoteTmuxControlConnection {
     static let altScreenExitSequence = Data("\u{1b}[?1049l".utf8)
 
     init(
-        host: RemoteTmuxHost,
         sessionName: String,
         createIfMissing: Bool = false,
-        transport: (any RemoteTmuxTransport)? = nil
+        transport: any RemoteTmuxTransport
     ) {
-        self.host = host
+        self.host = transport.host
         self.sessionName = sessionName
         self.createIfMissing = createIfMissing
-        self.transport = transport ?? RemoteTmuxSSHTransport(host: host)
+        self.transport = transport
+    }
+
+    convenience init(
+        sshHost host: RemoteTmuxHost,
+        sessionName: String,
+        createIfMissing: Bool = false
+    ) {
+        self.init(
+            sessionName: sessionName,
+            createIfMissing: createIfMissing,
+            transport: RemoteTmuxSSHTransport(host: host)
+        )
     }
 
     /// Spawns the transport's `tmux -CC` process and begins streaming.

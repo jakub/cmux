@@ -30,7 +30,7 @@ struct RemoteTmuxMirrorLifecycleTests {
         host: RemoteTmuxHost,
         sessionName: String
     ) throws -> RemoteTmuxControlConnection {
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: sessionName)
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: sessionName)
         controller.cacheConnection(connection)
         let mirrored = try controller.mirrorSession(host: host, sessionName: sessionName, into: manager)
         #expect(mirrored)
@@ -129,7 +129,7 @@ struct RemoteTmuxMirrorLifecycleTests {
         let manager = TabManager()
         let localWorkspace = try #require(manager.selectedWorkspace)
         let host = RemoteTmuxHost(destination: "user@host")
-        let connection = RemoteTmuxControlConnection(host: host, sessionName: "dev")
+        let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: "dev")
         appDelegate.remoteTmuxController.cacheConnection(connection)
         #expect(try appDelegate.remoteTmuxController.mirrorSession(
             host: host,
@@ -312,7 +312,7 @@ struct RemoteTmuxMirrorLifecycleTests {
 
         let target = TabManager()
         controller.cacheConnection(
-            RemoteTmuxControlConnection(host: host, sessionName: "dev")
+            RemoteTmuxControlConnection(sshHost: host, sessionName: "dev")
         )
         let workspaceIds = controller.mirrorDiscoveredSessions(
             host: host,

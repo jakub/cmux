@@ -380,7 +380,7 @@ final class RemoteTmuxSessionMirrorLayoutHarness {
         publishesLocalPrimaryPaneContext: Bool = false
     ) throws {
         connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"),
+            sshHost: RemoteTmuxHost(destination: "user@host"),
             sessionName: "work"
         )
         pipe = Pipe()

@@ -118,7 +118,7 @@ import Testing
         }
 
         func cacheConnection(host: RemoteTmuxHost, session: String) {
-            let connection = RemoteTmuxControlConnection(host: host, sessionName: session)
+            let connection = RemoteTmuxControlConnection(sshHost: host, sessionName: session)
             controller.cacheConnection(connection)
         }
 

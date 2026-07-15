@@ -53,7 +53,7 @@ import Testing
     }
 
     @Test func windowMirrorSplitRejectsWhileConnecting() {
-        let connection = RemoteTmuxControlConnection(host: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
+        let connection = RemoteTmuxControlConnection(sshHost: RemoteTmuxHost(destination: "user@host"), sessionName: "work")
         let mirror = RemoteTmuxWindowMirror(
             windowId: 1,
             panelId: UUID(),
@@ -68,7 +68,7 @@ import Testing
 
     @Test func windowMirrorConfigurationTracksWorkspaceAppearanceAndEmbeddedPolicy() {
         let connection = RemoteTmuxControlConnection(
-            host: RemoteTmuxHost(destination: "user@host"),
+            sshHost: RemoteTmuxHost(destination: "user@host"),
             sessionName: "work"
         )
         let mirror = RemoteTmuxWindowMirror(
