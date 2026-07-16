@@ -124,6 +124,75 @@ struct RemoteTmuxMirrorCLIObservabilityTests {
         #expect(current.surfaceTypeRawValue == PanelType.terminal.rawValue)
     }
 
+    @Test func workspaceFocusImmediatelyActivatesTheProjectedInnerPane() throws {
+        let harness = try Harness(activeTmuxPaneID: 11, connectedTransport: true)
+        defer { harness.tearDown() }
+
+        let sourcePanel = try #require(harness.mirror.panel(forPane: 11))
+        let targetPanel = try #require(harness.mirror.panel(forPane: 22))
+        let wrapperPanel = try #require(harness.workspace.terminalPanel(for: harness.outerPanelID))
+
+        harness.workspace.focusPanel(targetPanel.id)
+
+        #expect(harness.workspace.focusedPanelId == harness.outerPanelID)
+        #expect(harness.mirror.activePaneId == 22)
+        #expect(!sourcePanel.hostedView.debugPortalActive)
+        #expect(!wrapperPanel.hostedView.debugPortalActive)
+        #expect(targetPanel.hostedView.debugPortalActive)
+    }
+
+    @Test func socketFocusImmediatelyActivatesTheProjectedInnerPane() throws {
+        let harness = try Harness(activeTmuxPaneID: 11, connectedTransport: true)
+        defer { harness.tearDown() }
+
+        let sourcePanel = try #require(harness.mirror.panel(forPane: 11))
+        let targetPanel = try #require(harness.mirror.panel(forPane: 22))
+
+        let result = TerminalController.shared.controlSurfaceFocus(
+            routing: harness.routing(),
+            surfaceID: targetPanel.id
+        )
+
+        guard case .focused(_, let workspaceID, let surfaceID) = result else {
+            Issue.record("Expected projected surface focus, got \(result)")
+            return
+        }
+        #expect(workspaceID == harness.workspace.id)
+        #expect(surfaceID == targetPanel.id)
+        #expect(harness.workspace.focusedPanelId == harness.outerPanelID)
+        #expect(harness.mirror.activePaneId == 22)
+        #expect(!sourcePanel.hostedView.debugPortalActive)
+        #expect(targetPanel.hostedView.debugPortalActive)
+
+        let writer = try #require(harness.controlWriter)
+        let pipe = try #require(harness.controlPipe)
+        writer.close()
+        let commands = try #require(String(
+            bytes: try pipe.fileHandleForReading.readToEnd() ?? Data(),
+            encoding: .utf8
+        ))
+        #expect(commands.split(separator: "\n").map(String.init) == ["select-pane -t @3.%22"])
+    }
+
+    @Test func projectedSplitInheritsTheTargetPaneWorkingDirectory() throws {
+        let harness = try Harness(activeTmuxPaneID: 11, connectedTransport: true)
+        defer { harness.tearDown() }
+
+        let sourcePanel = try #require(harness.mirror.panel(forPane: 11))
+        let location = try #require(harness.workspace.remoteTmuxControlPane(surfaceID: sourcePanel.id))
+        #expect(location.requestSplit(vertical: true))
+
+        let writer = try #require(harness.controlWriter)
+        let pipe = try #require(harness.controlPipe)
+        writer.close()
+        let commands = try #require(String(
+            bytes: try pipe.fileHandleForReading.readToEnd() ?? Data(),
+            encoding: .utf8
+        ))
+        let commandLines = commands.split(separator: "\n").map(String.init)
+        #expect(commandLines.last == "split-window -v -c '#{pane_current_path}' -t @3.%11")
+    }
+
     @Test func defaultTriggerFlashProjectsTheActiveInnerPane() throws {
         do {
             let harness = try Harness()
