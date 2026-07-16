@@ -32,7 +32,6 @@ extension TerminalController {
         workspace: Workspace,
         tabManager: TabManager
     ) -> Bool {
-        guard location.controlFocus() else { return false }
         if let windowID = v2ResolveWindowId(tabManager: tabManager) {
             _ = AppDelegate.shared?.focusMainWindow(windowId: windowID)
             setActiveTabManager(tabManager)
@@ -40,11 +39,8 @@ extension TerminalController {
         if tabManager.selectedTabId != workspace.id {
             tabManager.selectWorkspace(workspace)
         }
-        // The wrapper is the mirror's real Bonsplit tab. Selecting it makes the
-        // projected TerminalPanelView visible; mirror.activePaneId drives which
-        // inner hosted view receives its `isFocused` responder state.
-        workspace.focusPanel(location.containerPanelID)
-        return true
+        workspace.focusPanel(location.pane.panel.id)
+        return workspace.matchesCurrentTerminalFocusTarget(surfaceID: location.pane.panel.id)
     }
 
     func controlRemoteTmuxSendText(

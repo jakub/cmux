@@ -223,13 +223,10 @@ struct WorkspaceContentView: View {
                         isOuterFocused: isFocused,
                         isVisibleInUI: isVisibleInUI,
                         portalPriority: workspacePortalPriority,
-                        onOuterFocus: {
-                            workspace.bonsplitController.focusPane(paneId)
+                        onPaneFocus: { surfaceID in
+                            workspace.focusPanel(surfaceID, trigger: .terminalFirstResponder)
                         }
                     )
-                    .onTapGesture {
-                        workspace.bonsplitController.focusPane(paneId)
-                    }
                 } else {
                     WorkspacePanelContentHostView(
                         workspace: workspace,

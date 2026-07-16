@@ -58,9 +58,11 @@ extension RemoteTmuxWindowMirror {
     /// authoritative layout publication.
     @discardableResult
     func requestSplit(fromPane tmuxPaneID: Int, vertical: Bool) -> Bool {
-        sendControlCommand(
-            "split-window \(vertical ? "-v" : "-h") -t @\(windowId).%\(tmuxPaneID)"
-        )
+        sendControlCommand(RemoteTmuxController.splitWindowCommand(
+            windowId: windowId,
+            paneId: tmuxPaneID,
+            vertical: vertical
+        ))
     }
 
     /// Resizes the addressed tmux pane by `amountCells` relative to one of its

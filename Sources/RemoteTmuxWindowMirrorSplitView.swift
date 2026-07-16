@@ -8,7 +8,7 @@ struct RemoteTmuxWindowMirrorSplitView: View {
     let isOuterFocused: Bool
     let isVisibleInUI: Bool
     let portalPriority: Int
-    let onOuterFocus: () -> Void
+    let onPaneFocus: (UUID) -> Void
     @Environment(\.displayScale) private var displayScale
     @State private var containerSize: CGSize = .zero
 
@@ -27,8 +27,7 @@ struct RemoteTmuxWindowMirrorSplitView: View {
                     hasUnreadNotification: false,
                     terminalAgentContext: "",
                     onFocus: {
-                        onOuterFocus()
-                        mirror.setActivePane(tmuxPaneId, fromTmux: false)
+                        onPaneFocus(panel.id)
                     },
                     onResumeAgentHibernation: {},
                     onAutoResumeAgentHibernation: {},
@@ -36,8 +35,7 @@ struct RemoteTmuxWindowMirrorSplitView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .onTapGesture {
-                    onOuterFocus()
-                    mirror.bonsplitController.focusPane(paneId)
+                    onPaneFocus(panel.id)
                 }
             } else {
                 Color(nsColor: appearance.backgroundColor)

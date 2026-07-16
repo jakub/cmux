@@ -456,7 +456,7 @@ final class RemoteTmuxSessionMirror: RemoteTmuxControlPaneMutationOwner {
         let targetPane = windowMirrorByWindowId[windowId]?.activePaneId
             ?? connection.windowsByID[windowId]?.paneIDsInOrder.first
         guard let targetPane else { return false }
-        return connection.send("split-window \(vertical ? "-v" : "-h") -t @\(windowId).%\(targetPane)")
+        return requestSplit(fromPane: targetPane, vertical: vertical)
     }
 
     /// Whether `surfaceId` is one of this session mirror's pane surfaces — a

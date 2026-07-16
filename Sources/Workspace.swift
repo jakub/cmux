@@ -2172,7 +2172,8 @@ final class Workspace: Identifiable, ObservableObject {
     /// The currently focused terminal panel (if any)
     var focusedTerminalPanel: TerminalPanel? {
         guard let panelId = focusedPanelId,
-              let panel = panels[panelId] as? TerminalPanel else {
+              let panel = controlSurfaceProjection(forContainerPanelID: panelId)?.panel
+                as? TerminalPanel else {
             return nil
         }
         return panel
@@ -5007,6 +5008,9 @@ final class Workspace: Identifiable, ObservableObject {
 
     /// Per-window multi-pane renderers, keyed by mirrored window-tab panel id.
     private(set) var remoteTmuxWindowMirrors: [UUID: RemoteTmuxWindowMirror] = [:]
+    /// Prevents projected inner-pane focus from re-entering the tmux selector
+    /// while it activates the owning outer Bonsplit tab.
+    var remoteTmuxFocusInterceptorBypassPanelID: UUID?
 
     /// Multi-pane renderer for a window-tab panel.
     func remoteTmuxWindowMirror(forPanelId panelId: UUID) -> RemoteTmuxWindowMirror? {
@@ -5016,6 +5020,10 @@ final class Workspace: Identifiable, ObservableObject {
     func setRemoteTmuxWindowMirror(_ mirror: RemoteTmuxWindowMirror?, forPanelId panelId: UUID) {
         objectWillChange.send()
         if let mirror {
+            mirror.onFocusPaneRequest = { [weak self, weak mirror] tmuxPaneId in
+                guard let panel = mirror?.panel(forPane: tmuxPaneId) else { return }
+                self?.focusPanel(panel.id, trigger: .terminalFirstResponder)
+            }
             remoteTmuxWindowMirrors[panelId] = mirror
         } else {
             remoteTmuxWindowMirrors.removeValue(forKey: panelId)
@@ -9641,11 +9649,14 @@ final class Workspace: Identifiable, ObservableObject {
             maybeAutoFocusBrowserAddressBarOnPanelFocus(browserPanel, trigger: trigger)
         }
 
+        let focusedTerminalSurfaceID = controlSurfaceProjection(
+            forContainerPanelID: panelId
+        )?.surfaceID ?? panelId
         if trigger == .terminalFirstResponder,
-           panels[panelId] is TerminalPanel {
+           controlTerminalPanel(for: focusedTerminalSurfaceID) != nil {
             beginEventDrivenLayoutFollowUp(
                 reason: "workspace.focusPanel.terminal",
-                terminalFocusPanelId: panelId
+                terminalFocusPanelId: focusedTerminalSurfaceID
             )
         }
     }
@@ -9978,15 +9989,21 @@ final class Workspace: Identifiable, ObservableObject {
             }
         }
 
-        guard let targetPanelId, let targetPanel = panels[targetPanelId] else { return }
+        guard let targetPanelId,
+              let projection = controlSurfaceProjection(forContainerPanelID: targetPanelId) else {
+            return
+        }
+        let targetSurfaceId = projection.surfaceID
+        let targetPanel = projection.panel
 
-        for (panelId, panel) in panels where panelId != targetPanelId {
+        for (panelId, panel) in panels where panelId != targetSurfaceId {
             panel.unfocus()
         }
+        unfocusRemoteTmuxControlPanes(except: targetSurfaceId)
 
         targetPanel.focus()
         if let terminalPanel = targetPanel as? TerminalPanel {
-            terminalPanel.hostedView.ensureFocus(for: id, surfaceId: targetPanelId)
+            terminalPanel.hostedView.ensureFocus(for: id, surfaceId: targetSurfaceId)
         }
         if let dir = panelDirectories[targetPanelId] {
             currentDirectory = dir
@@ -10288,10 +10305,11 @@ final class Workspace: Identifiable, ObservableObject {
 
     private func terminalFocusNeedsFollowUp() -> Bool {
         guard let panelId = layoutFollowUpTerminalFocusPanelId,
-              let terminalPanel = terminalPanel(for: panelId) else {
+              let terminalPanel = controlTerminalPanel(for: panelId) else {
             return false
         }
-        return focusedPanelId != panelId || !terminalPanel.hostedView.isSurfaceViewFirstResponder()
+        return !matchesCurrentTerminalFocusTarget(surfaceID: panelId)
+            || !terminalPanel.hostedView.isSurfaceViewFirstResponder()
     }
 
     private func browserPanelNeedsFollowUp() -> Bool {
@@ -10328,13 +10346,13 @@ final class Workspace: Identifiable, ObservableObject {
         }
 
         if let terminalFocusPanelId = layoutFollowUpTerminalFocusPanelId {
-            if let terminalPanel = terminalPanel(for: terminalFocusPanelId),
-               focusedPanelId == terminalFocusPanelId {
+            if let terminalPanel = controlTerminalPanel(for: terminalFocusPanelId),
+               matchesCurrentTerminalFocusTarget(surfaceID: terminalFocusPanelId) {
                 terminalPanel.hostedView.ensureFocus(for: id, surfaceId: terminalFocusPanelId)
                 if terminalPanel.hostedView.isSurfaceViewFirstResponder() {
                     layoutFollowUpTerminalFocusPanelId = nil
                 }
-            } else if terminalPanel(for: terminalFocusPanelId) == nil {
+            } else if controlTerminalPanel(for: terminalFocusPanelId) == nil {
                 layoutFollowUpTerminalFocusPanelId = nil
             }
         }
@@ -11531,10 +11549,15 @@ extension Workspace: BonsplitDelegate {
         guard let selectedPanelId = panelIdFromSurfaceId(selectedTabId) else {
             return
         }
-        let effectiveFocusedPanelId = effectiveSelectedPanelId(inPane: focusedPane) ?? selectedPanelId
-        guard let panel = panels[effectiveFocusedPanelId] else {
+        let effectiveFocusedContainerPanelId = effectiveSelectedPanelId(inPane: focusedPane)
+            ?? selectedPanelId
+        guard let projection = controlSurfaceProjection(
+            forContainerPanelID: effectiveFocusedContainerPanelId
+        ) else {
             return
         }
+        let panelId = projection.surfaceID
+        let panel = projection.panel
 
         if debugStressPreloadSelectionDepth > 0 {
             if let terminalPanel = panel as? TerminalPanel {
@@ -11547,14 +11570,13 @@ extension Workspace: BonsplitDelegate {
 
         let explicitFocusIntent = shouldTreatCurrentEventAsExplicitFocusIntent()
         if explicitFocusIntent {
-            markExplicitFocusIntent(on: effectiveFocusedPanelId)
+            markExplicitFocusIntent(on: panelId)
         }
         // Selecting a hibernated tab means the user is visiting it again. Resume by
         // default so sidebar/tab selection behaves the same as pressing Resume.
         let shouldResumeHibernatedAgent = resumeHibernatedAgent ?? true
         let activationIntent = focusIntent ?? panel.preferredFocusIntentForActivation()
         panel.prepareFocusIntentForActivation(activationIntent)
-        let panelId = effectiveFocusedPanelId
         if let terminalPanel = panel as? TerminalPanel {
             if terminalPanel.isAgentHibernated, shouldResumeHibernatedAgent {
                 _ = resumeAgentHibernation(panelId: panelId, focus: false)
@@ -11563,16 +11585,17 @@ extension Workspace: BonsplitDelegate {
         }
 
         syncPinnedStateForTab(selectedTabId, panelId: selectedPanelId)
-        if previousFocusedPanelId != panelId {
+        if previousFocusedPanelId != effectiveFocusedContainerPanelId {
             syncUnreadBadgeStateForAllPanels()
         } else {
             syncUnreadBadgeStateForPanel(selectedPanelId)
         }
 
         // Unfocus all other panels
-        for (id, p) in panels where id != effectiveFocusedPanelId {
+        for (id, p) in panels where id != panelId {
             p.unfocus()
         }
+        unfocusRemoteTmuxControlPanes(except: panelId)
 
         // Explicitly hide browser portals for deselected tabs in this pane.
         // Bonsplit's keepAllAlive mode hides non-selected tabs via SwiftUI .opacity(0),
@@ -11636,17 +11659,17 @@ extension Workspace: BonsplitDelegate {
             _ = panel.restoreFocusIntent(activationIntent)
         }
 
-        surfaceTabBarDirectory = configTrackingDirectory(for: panelId)
+        surfaceTabBarDirectory = configTrackingDirectory(for: effectiveFocusedContainerPanelId)
 
         // Update current directory if this is a terminal
-        if let dir = panelDirectories[panelId] {
+        if let dir = panelDirectories[effectiveFocusedContainerPanelId] {
             currentDirectory = dir
         }
         if usesRemoteDirectoryProvenance, previousCurrentDirectory == currentDirectory {
             notifyPresentedCurrentDirectoryChanged(from: previousPresentedDirectory)
         }
-        gitBranch = panelGitBranches[panelId]
-        pullRequest = panelPullRequests[panelId]
+        gitBranch = panelGitBranches[effectiveFocusedContainerPanelId]
+        pullRequest = panelPullRequests[effectiveFocusedContainerPanelId]
 
         // Broadcast the focus change. This is deferred + coalesced (not posted
         // synchronously) so the `@Published` mutations above settle before any

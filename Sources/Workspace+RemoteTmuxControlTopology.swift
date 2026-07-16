@@ -111,9 +111,30 @@ extension Workspace {
         focusIntent: PanelFocusIntent?
     ) -> Bool {
         if remoteTmuxMirrorMutations.suppressesFocusActivation { return true }
-        guard let location = remoteTmuxControlPane(surfaceID: panelId),
-              location.containerPanelID != panelId else { return false }
-        _ = location.controlFocus()
+        if remoteTmuxFocusInterceptorBypassPanelID == panelId { return false }
+        guard let location = remoteTmuxControlPane(surfaceID: panelId) else { return false }
+        // A window's original single pane can retain the outer container UUID
+        // after tmux splits it. It is then both a real outer Bonsplit tab and a
+        // projected inner pane: select it remotely here, then let the ordinary
+        // path below activate that same outer tab using the updated projection.
+        if location.containerPanelID == panelId {
+            guard location.windowMirror != nil else { return false }
+            if !location.pane.isFocused {
+                guard location.controlFocus() else { return true }
+                location.windowMirror?.setActivePane(location.pane.tmuxPaneID, fromTmux: true)
+            }
+            return false
+        }
+        if !location.pane.isFocused {
+            guard location.controlFocus() else { return true }
+            // The control stream remains authoritative, but its publication is
+            // asynchronous. Project the accepted selection immediately so the
+            // UI and AppKit first responder cannot snap back to the old pane.
+            location.windowMirror?.setActivePane(location.pane.tmuxPaneID, fromTmux: true)
+        }
+        let previousBypassPanelID = remoteTmuxFocusInterceptorBypassPanelID
+        remoteTmuxFocusInterceptorBypassPanelID = location.containerPanelID
+        defer { remoteTmuxFocusInterceptorBypassPanelID = previousBypassPanelID }
         focusPanel(
             location.containerPanelID,
             previousHostedView: previousHostedView,
@@ -161,6 +182,36 @@ extension Workspace {
         }
         guard let panel = panels[containerPanelID] else { return nil }
         return (containerPanelID, paneId(forPanelId: containerPanelID)?.id, panel)
+    }
+
+    /// Whether a terminal surface is the effective focus target right now.
+    /// Outer Bonsplit owns selection for a mirrored tmux window; the mirror's
+    /// active pane owns the terminal surface nested inside that selection.
+    func matchesCurrentTerminalFocusTarget(surfaceID: UUID) -> Bool {
+        if let location = remoteTmuxControlPane(surfaceID: surfaceID) {
+            guard focusedPanelId == location.containerPanelID else { return false }
+            return activeRemoteTmuxControlPane(containerPanelID: location.containerPanelID)?
+                .pane.panel.id == surfaceID
+        }
+
+        guard let tabID = surfaceIdFromPanelId(surfaceID),
+              let paneID = bonsplitController.allPaneIds.first(where: { paneID in
+                  bonsplitController.tabs(inPane: paneID).contains(where: { $0.id == tabID })
+              }) else { return false }
+        return bonsplitController.selectedTab(inPane: paneID)?.id == tabID
+            && bonsplitController.focusedPaneId == paneID
+    }
+
+    /// Deactivates every projected tmux terminal except the effective target.
+    /// Mirror panes are intentionally absent from `Workspace.panels`, so the
+    /// ordinary unfocus loop cannot enforce this invariant by itself.
+    func unfocusRemoteTmuxControlPanes(except surfaceID: UUID?) {
+        for containerPanelID in panels.keys where isRemoteTmuxControlContainer(containerPanelID) {
+            for location in remoteTmuxControlPanes(containerPanelID: containerPanelID)
+            where location.pane.panel.id != surfaceID {
+                location.pane.panel.unfocus()
+            }
+        }
     }
 
     /// Resolves the selected terminal target. A mirror container projects its

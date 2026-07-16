@@ -142,9 +142,11 @@ extension RemoteTmuxSessionMirror {
 
     func requestSplit(fromPane tmuxPaneID: Int, vertical: Bool) -> Bool {
         guard let windowID = windowIdByPane[tmuxPaneID] else { return false }
-        return connection.send(
-            "split-window \(vertical ? "-v" : "-h") -t @\(windowID).%\(tmuxPaneID)"
-        )
+        return connection.send(RemoteTmuxController.splitWindowCommand(
+            windowId: windowID,
+            paneId: tmuxPaneID,
+            vertical: vertical
+        ))
     }
 
     func requestResizePane(_ tmuxPaneID: Int, direction: String, amountCells: Int) -> Bool {

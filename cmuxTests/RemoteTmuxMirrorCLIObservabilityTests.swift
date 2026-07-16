@@ -139,6 +139,14 @@ struct RemoteTmuxMirrorCLIObservabilityTests {
         #expect(!sourcePanel.hostedView.debugPortalActive)
         #expect(!wrapperPanel.hostedView.debugPortalActive)
         #expect(targetPanel.hostedView.debugPortalActive)
+        #expect(!harness.workspace.matchesCurrentTerminalFocusTarget(surfaceID: sourcePanel.id))
+        #expect(harness.workspace.matchesCurrentTerminalFocusTarget(surfaceID: targetPanel.id))
+
+        harness.workspace.scheduleFocusReconcile()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        #expect(harness.mirror.activePaneId == 22)
+        #expect(!sourcePanel.hostedView.debugPortalActive)
+        #expect(targetPanel.hostedView.debugPortalActive)
     }
 
     @Test func socketFocusImmediatelyActivatesTheProjectedInnerPane() throws {
@@ -171,7 +179,64 @@ struct RemoteTmuxMirrorCLIObservabilityTests {
             bytes: try pipe.fileHandleForReading.readToEnd() ?? Data(),
             encoding: .utf8
         ))
-        #expect(commands.split(separator: "\n").map(String.init) == ["select-pane -t @3.%22"])
+        let paneSelections = commands.split(separator: "\n").map(String.init).filter {
+            $0.hasPrefix("select-pane ")
+        }
+        #expect(paneSelections == ["select-pane -t @3.%22"])
+    }
+
+    @Test func workspaceFocusSelectsAnAdoptedContainerPane() throws {
+        let harness = try Harness(
+            activeTmuxPaneID: 22,
+            connectedTransport: true,
+            adoptFirstPane: true
+        )
+        defer { harness.tearDown() }
+
+        let adoptedPanel = try #require(harness.mirror.panel(forPane: 11))
+        let peerPanel = try #require(harness.mirror.panel(forPane: 22))
+        #expect(adoptedPanel.id == harness.outerPanelID)
+
+        harness.workspace.focusPanel(adoptedPanel.id, trigger: .terminalFirstResponder)
+
+        #expect(harness.workspace.focusedPanelId == harness.outerPanelID)
+        #expect(harness.mirror.activePaneId == 11)
+        #expect(adoptedPanel.hostedView.debugPortalActive)
+        #expect(!peerPanel.hostedView.debugPortalActive)
+        #expect(harness.workspace.matchesCurrentTerminalFocusTarget(surfaceID: adoptedPanel.id))
+    }
+
+    @Test func workspaceFocusesPeerWithoutReselectingTheAdoptedContainerPane() throws {
+        let harness = try Harness(
+            activeTmuxPaneID: 11,
+            connectedTransport: true,
+            adoptFirstPane: true
+        )
+        defer { harness.tearDown() }
+
+        let adoptedPanel = try #require(harness.mirror.panel(forPane: 11))
+        let peerPanel = try #require(harness.mirror.panel(forPane: 22))
+        #expect(adoptedPanel.id == harness.outerPanelID)
+
+        harness.workspace.focusPanel(peerPanel.id, trigger: .terminalFirstResponder)
+
+        #expect(harness.workspace.focusedPanelId == harness.outerPanelID)
+        #expect(harness.mirror.activePaneId == 22)
+        #expect(!adoptedPanel.hostedView.debugPortalActive)
+        #expect(peerPanel.hostedView.debugPortalActive)
+        #expect(harness.workspace.matchesCurrentTerminalFocusTarget(surfaceID: peerPanel.id))
+
+        let writer = try #require(harness.controlWriter)
+        let pipe = try #require(harness.controlPipe)
+        writer.close()
+        let commands = try #require(String(
+            bytes: try pipe.fileHandleForReading.readToEnd() ?? Data(),
+            encoding: .utf8
+        ))
+        let paneSelections = commands.split(separator: "\n").map(String.init).filter {
+            $0.hasPrefix("select-pane ")
+        }
+        #expect(paneSelections == ["select-pane -t @3.%22"])
     }
 
     @Test func projectedSplitInheritsTheTargetPaneWorkingDirectory() throws {
@@ -416,6 +481,7 @@ struct RemoteTmuxMirrorCLIObservabilityTests {
             addPeerSurface: Bool = false,
             activeTmuxPaneID: Int? = 22,
             connectedTransport: Bool = false,
+            adoptFirstPane: Bool = false,
             geometryScale: CGFloat = 2,
             mirrorLayout: RemoteTmuxLayoutNode? = nil
         ) throws {
@@ -485,6 +551,12 @@ struct RemoteTmuxMirrorCLIObservabilityTests {
                 surfacePadHeightPx: Int(4 * geometryScale),
                 scale: geometryScale
             )
+            let adoptedPanes: [RemoteTmuxWindowMirror.AdoptedPane]
+            if adoptFirstPane {
+                adoptedPanes = [(11, try #require(workspace.terminalPanel(for: outerPanelID)))]
+            } else {
+                adoptedPanes = []
+            }
             mirror = RemoteTmuxWindowMirror(
                 windowId: 3,
                 panelId: outerPanelID,
@@ -492,6 +564,7 @@ struct RemoteTmuxMirrorCLIObservabilityTests {
                 layout: layout,
                 geometrySource: { geometry },
                 controlPaneID: { [paneIDs] in paneIDs[$0] },
+                adoptedPanes: adoptedPanes,
                 makePanel: { [workspace] _ in
                     workspace.makeRemoteTmuxPanePanel(onInput: { _ in })
                 }

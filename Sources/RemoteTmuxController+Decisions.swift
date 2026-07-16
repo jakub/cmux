@@ -128,6 +128,19 @@ extension RemoteTmuxController {
         return command
     }
 
+    /// Builds the one tmux split command used by session mirrors, standalone
+    /// window mirrors, and their Bonsplit chrome. `pane_current_path` is
+    /// evaluated by tmux against the explicit target pane, so a split inherits
+    /// the addressed pane's live remote cwd without ever substituting a local
+    /// workspace path.
+    nonisolated static func splitWindowCommand(
+        windowId: Int,
+        paneId: Int,
+        vertical: Bool
+    ) -> String {
+        "split-window \(vertical ? "-v" : "-h") -c '#{pane_current_path}' -t @\(windowId).%\(paneId)"
+    }
+
     /// Builds the commands that selection-sort `current` into `desired` using
     /// stable tmux window ids and detached swaps.
     nonisolated static func mirrorWindowReorderCommands(
