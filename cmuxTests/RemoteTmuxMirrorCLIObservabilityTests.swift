@@ -239,6 +239,38 @@ struct RemoteTmuxMirrorCLIObservabilityTests {
         #expect(paneSelections == ["select-pane -t @3.%22"])
     }
 
+    @Test func windowKeyRestoreKeepsTheProjectedInnerPaneFocused() throws {
+        let harness = try Harness(
+            activeTmuxPaneID: 22,
+            connectedTransport: true,
+            adoptFirstPane: true
+        )
+        defer { harness.tearDown() }
+
+        let window = try #require(harness.appDelegate.windowForMainWindowId(harness.windowID))
+        let focusController = try #require(
+            harness.appDelegate.keyboardFocusCoordinator(for: window)
+        )
+        let adoptedPanel = try #require(harness.mirror.panel(forPane: 11))
+        let targetPanel = try #require(harness.mirror.panel(forPane: 22))
+        #expect(adoptedPanel.id == harness.outerPanelID)
+
+        harness.appDelegate.noteTerminalKeyboardFocusIntent(
+            workspaceId: harness.workspace.id,
+            panelId: targetPanel.id,
+            in: window
+        )
+        #expect(window.makeFirstResponder(nil))
+
+        #expect(focusController.restoreTargetAfterWindowBecameKey())
+
+        #expect(harness.workspace.focusedPanelId == harness.outerPanelID)
+        #expect(harness.mirror.activePaneId == 22)
+        #expect(!adoptedPanel.hostedView.debugPortalActive)
+        #expect(targetPanel.hostedView.debugPortalActive)
+        #expect(harness.workspace.matchesCurrentTerminalFocusTarget(surfaceID: targetPanel.id))
+    }
+
     @Test func projectedSplitInheritsTheTargetPaneWorkingDirectory() throws {
         let harness = try Harness(activeTmuxPaneID: 11, connectedTransport: true)
         defer { harness.tearDown() }
