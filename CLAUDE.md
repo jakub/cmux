@@ -208,6 +208,21 @@ Use the stable tag `direct-tmux-complete` while working on this mode:
 CMUX_TAG=direct-tmux-complete scripts/cmux-debug-cli.sh list-workspaces
 ```
 
+For a lightweight local release from the current checkout, build and install a
+stable, isolated app at `/Applications/ctmux.app`:
+
+```bash
+./scripts/install-ctmux.sh
+./scripts/install-ctmux.sh --launch
+```
+
+This is an ad-hoc-signed tagged Debug build, not a notarized public Release. The
+installer builds successfully before replacing the existing app, rewrites the
+bundle's embedded CLI and shell-integration paths for `/Applications`, verifies
+the signature, and rolls back the prior app if replacement fails. It defaults
+`CMUX_SKIP_ZIG_BUILD=1` for compatibility with the local Xcode 27 setup; set it
+to `0` when a compatible full Ghostty CLI helper toolchain is available.
+
 The full Debug bundle includes two different Ghostty artifacts:
 
 - `GhosttyKit.xcframework` is the real terminal runtime and renderer.
