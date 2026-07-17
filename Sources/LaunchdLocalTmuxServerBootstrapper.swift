@@ -30,8 +30,6 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
         shellExecutablePath: String
     ) async throws {
         let identity = LocalTmuxLaunchdIdentity(environment: environment, userID: userID)
-        if fileManager.fileExists(atPath: identity.socketPath) { return }
-
         try prepareSocketDirectory(identity.socketDirectory)
         let serviceTarget = "gui/\(userID)/\(identity.serviceLabel)"
         let launchEnvironment = Self.launchEnvironment(from: environment)
