@@ -113,6 +113,62 @@ import Testing
         #expect(invocations[0].hasSuffix("-s claude-work -c /tmp/work tree"))
     }
 
+    @Test func localPrimaryFirstServerIsOwnedByLaunchd() async throws {
+        let root = URL(
+            fileURLWithPath: "/tmp/cmux-launchd-\(String(UUID().uuidString.prefix(8)))",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["TMUX_TMPDIR"] = root.path
+        environment.removeValue(forKey: "TMUX")
+        environment.removeValue(forKey: "TMUX_PANE")
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            environment: environment,
+            defaultWorkingDirectory: root.path
+        )
+        let socketPath = root
+            .appendingPathComponent("tmux-\(getuid())", isDirectory: true)
+            .appendingPathComponent("default", isDirectory: false)
+            .path
+        let serviceLabel = localTmuxLaunchdServiceLabel(socketPath: socketPath)
+        let serviceTarget = "gui/\(getuid())/\(serviceLabel)"
+
+        do {
+            _ = try await transport.createSession(
+                name: "cmux-launchd-\(String(UUID().uuidString.prefix(8)))",
+                workingDirectory: nil
+            )
+            let service = try runProcess(
+                executable: "/bin/launchctl",
+                arguments: ["print", serviceTarget],
+                environment: environment
+            )
+
+            #expect(service.status == 0)
+            #expect(service.stdout.contains("tmux"))
+            #expect(service.stdout.contains("-D"))
+        } catch {
+            _ = try? await transport.runTmux(["kill-server"])
+            _ = try? runProcess(
+                executable: "/bin/launchctl",
+                arguments: ["bootout", serviceTarget],
+                environment: environment
+            )
+            throw error
+        }
+
+        _ = try? await transport.runTmux(["kill-server"])
+        _ = try? runProcess(
+            executable: "/bin/launchctl",
+            arguments: ["bootout", serviceTarget],
+            environment: environment
+        )
+    }
+
     @Test func localPrimaryDefaultsImplicitWorkingDirectoryToHome() async throws {
         let root = try temporaryDirectory(prefix: "local-tmux-bootstrap-home")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -813,6 +869,39 @@ import Testing
     private func writeExecutable(at url: URL, contents: String) throws {
         try contents.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    private func localTmuxLaunchdServiceLabel(socketPath: String) -> String {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in socketPath.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x0000_0100_0000_01b3
+        }
+        return "com.cmuxterm.local-tmux-server.\(String(format: "%016llx", hash))"
+    }
+
+    private func runProcess(
+        executable: String,
+        arguments: [String],
+        environment: [String: String]
+    ) throws -> (status: Int32, stdout: String, stderr: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.environment = environment
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        try process.run()
+        process.waitUntilExit()
+        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        return (
+            process.terminationStatus,
+            String(decoding: stdoutData, as: UTF8.self),
+            String(decoding: stderrData, as: UTF8.self)
+        )
     }
 
     private func runShell(
