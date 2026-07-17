@@ -189,10 +189,10 @@ import Testing
 
         let killed = try await transport.runTmux(["kill-server"])
         #expect(killed.succeeded)
-        let stoppedService = try runProcess(
-            executable: "/bin/launchctl",
-            arguments: ["print", serviceTarget],
-            environment: environment
+        let stoppedService = try await waitForLaunchdService(
+            serviceTarget,
+            environment: environment,
+            containing: "state = not running"
         )
         #expect(stoppedService.status == 0)
         #expect(stoppedService.stdout.contains("state = not running"))
@@ -1040,6 +1040,27 @@ import Testing
             arguments: ["bootout", "gui/\(getuid())/\(label)"],
             environment: environment
         )
+    }
+
+    private func waitForLaunchdService(
+        _ serviceTarget: String,
+        environment: [String: String],
+        containing expectedOutput: String
+    ) async throws -> (status: Int32, stdout: String, stderr: String) {
+        var result = try runProcess(
+            executable: "/bin/launchctl",
+            arguments: ["print", serviceTarget],
+            environment: environment
+        )
+        for _ in 0..<50 where !result.stdout.contains(expectedOutput) {
+            try await Task.sleep(for: .milliseconds(20))
+            result = try runProcess(
+                executable: "/bin/launchctl",
+                arguments: ["print", serviceTarget],
+                environment: environment
+            )
+        }
+        return result
     }
 
     private func runShell(

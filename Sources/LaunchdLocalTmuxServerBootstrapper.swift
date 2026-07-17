@@ -48,6 +48,7 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
                 environment: launchEnvironment
             )
         }
+        let staleSocketIdentity = LocalTmuxSocketFileIdentity(path: identity.socketPath)
 
         let plistURL = fileManager.temporaryDirectory.appendingPathComponent(
             "\(identity.serviceLabel).\(UUID().uuidString).plist",
@@ -80,7 +81,7 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
             }
         }
 
-        try await waitForSocket(identity)
+        try await waitForSocket(identity, replacing: staleSocketIdentity)
     }
 
     nonisolated static func serviceLabel(socketPath: String) -> String {
@@ -133,9 +134,25 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
             arguments: ["-D"],
             commandName: "cmux-local-tmux-server"
         )
+        // The caller has already proved that no server responds, but tmux can
+        // leave its Unix socket behind after an unclean exit. Remove that stale
+        // inode inside the stable-label launchd job, immediately before tmux
+        // starts. Doing this in cmux before `bootstrap` would let two tagged app
+        // processes race and unlink the winning server's newly-created socket.
+        let launchScript =
+            "cmux_socket=$1; shift; " +
+            "/bin/rm -f -- \"$cmux_socket\" || exit $?; " +
+            "exec \"$@\""
         let plist: [String: Any] = [
             "Label": identity.serviceLabel,
-            "ProgramArguments": [shellExecutablePath] + resolver.arguments,
+            "ProgramArguments": [
+                shellExecutablePath,
+                "-c",
+                launchScript,
+                "cmux-local-tmux-launchd",
+                identity.socketPath,
+                resolver.executable,
+            ] + resolver.arguments,
             "EnvironmentVariables": environment,
             "RunAtLoad": true,
             "KeepAlive": false,
@@ -152,12 +169,15 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
-    private func waitForSocket(_ identity: LocalTmuxLaunchdIdentity) async throws {
+    private func waitForSocket(
+        _ identity: LocalTmuxLaunchdIdentity,
+        replacing staleSocketIdentity: LocalTmuxSocketFileIdentity? = nil
+    ) async throws {
         let waiter = LocalTmuxSocketReadinessWaiter(
             socketPath: identity.socketPath,
             socketDirectoryPath: identity.socketDirectory.path,
-            timeout: readinessTimeout,
-            fileManager: fileManager
+            staleSocketIdentity: staleSocketIdentity,
+            timeout: readinessTimeout
         )
         try await waiter.wait()
     }
@@ -200,6 +220,18 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
     }
 }
 
+private struct LocalTmuxSocketFileIdentity: Equatable {
+    let device: dev_t
+    let inode: ino_t
+
+    init?(path: String) {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        device = info.st_dev
+        inode = info.st_ino
+    }
+}
+
 private struct LocalTmuxLaunchdIdentity {
     let socketDirectory: URL
     let socketPath: String
@@ -221,8 +253,8 @@ private struct LocalTmuxLaunchdIdentity {
 private final class LocalTmuxSocketReadinessWaiter: @unchecked Sendable {
     private let socketPath: String
     private let socketDirectoryPath: String
+    private let staleSocketIdentity: LocalTmuxSocketFileIdentity?
     private let timeout: TimeInterval
-    private let fileManager: FileManager
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Void, Error>?
     private var source: DispatchSourceFileSystemObject?
@@ -231,17 +263,17 @@ private final class LocalTmuxSocketReadinessWaiter: @unchecked Sendable {
     init(
         socketPath: String,
         socketDirectoryPath: String,
-        timeout: TimeInterval,
-        fileManager: FileManager
+        staleSocketIdentity: LocalTmuxSocketFileIdentity?,
+        timeout: TimeInterval
     ) {
         self.socketPath = socketPath
         self.socketDirectoryPath = socketDirectoryPath
+        self.staleSocketIdentity = staleSocketIdentity
         self.timeout = timeout
-        self.fileManager = fileManager
     }
 
     func wait() async throws {
-        if fileManager.fileExists(atPath: socketPath) { return }
+        if socketIsReady { return }
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 install(continuation)
@@ -265,7 +297,7 @@ private final class LocalTmuxSocketReadinessWaiter: @unchecked Sendable {
             queue: DispatchQueue.global(qos: .utility)
         )
         source.setEventHandler { [weak self] in
-            guard let self, self.fileManager.fileExists(atPath: self.socketPath) else { return }
+            guard let self, self.socketIsReady else { return }
             self.finish(.success(()))
         }
         source.setCancelHandler { close(descriptor) }
@@ -282,13 +314,13 @@ private final class LocalTmuxSocketReadinessWaiter: @unchecked Sendable {
         lock.unlock()
 
         source.resume()
-        if fileManager.fileExists(atPath: socketPath) {
+        if socketIsReady {
             finish(.success(()))
             return
         }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) { [weak self] in
             guard let self else { return }
-            if self.fileManager.fileExists(atPath: self.socketPath) {
+            if self.socketIsReady {
                 self.finish(.success(()))
             } else {
                 self.finish(.failure(RemoteTmuxError.localServerBootstrapFailed(
@@ -296,6 +328,14 @@ private final class LocalTmuxSocketReadinessWaiter: @unchecked Sendable {
                 )))
             }
         }
+    }
+
+    private var socketIsReady: Bool {
+        guard let currentIdentity = LocalTmuxSocketFileIdentity(path: socketPath) else {
+            return false
+        }
+        guard let staleSocketIdentity else { return true }
+        return currentIdentity != staleSocketIdentity
     }
 
     private func finish(_ result: Result<Void, Error>) {
