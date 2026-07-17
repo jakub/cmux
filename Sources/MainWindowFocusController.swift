@@ -307,10 +307,14 @@ final class MainWindowFocusController {
         guard let window,
               let tabManager,
               let workspace = tabManager.selectedWorkspace,
-              let panelId = workspace.focusedPanelId,
-              let panel = workspace.panels[panelId] else {
+              let containerPanelId = workspace.focusedPanelId,
+              let projection = workspace.controlSurfaceProjection(
+                  forContainerPanelID: containerPanelId
+              ) else {
             return false
         }
+        let panelId = projection.surfaceID
+        let panel = projection.panel
 
         if let responder = window.firstResponder {
             if panel.ownedFocusIntent(for: responder, in: window) != nil {
@@ -564,14 +568,7 @@ final class MainWindowFocusController {
               let workspace = tabManager.selectedWorkspace else {
             return false
         }
-        let terminalPanel: TerminalPanel? = {
-            if let focusedPanelId = workspace.focusedPanelId,
-               let terminalPanel = workspace.terminalPanel(for: focusedPanelId) {
-                return terminalPanel
-            }
-            return workspace.focusedTerminalPanel
-        }()
-        guard let terminalPanel else { return false }
+        guard let terminalPanel = workspace.focusedTerminalPanel else { return false }
         rightSidebarFocusState = .inactive
         intent = .mainPanel(workspaceId: workspace.id, panelId: terminalPanel.id)
         publishFeedFocusSnapshot()
@@ -758,14 +755,8 @@ final class MainWindowFocusController {
               let workspace = tabManager.selectedWorkspace else {
             return
         }
-        let terminalPanel: TerminalPanel? = {
-            if let focusedPanelId = workspace.focusedPanelId,
-               let terminalPanel = workspace.terminalPanel(for: focusedPanelId) {
-                return terminalPanel
-            }
-            return workspace.focusedTerminalPanel
-        }()
-        terminalPanel?.hostedView.yieldTerminalSurfaceFocusForForeignResponder(reason: reason)
+        workspace.focusedTerminalPanel?.hostedView
+            .yieldTerminalSurfaceFocusForForeignResponder(reason: reason)
     }
 
     private func isFeedKeyboardIntentActive() -> Bool {
