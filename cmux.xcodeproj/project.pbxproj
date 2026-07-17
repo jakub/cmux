@@ -877,8 +877,10 @@ C0DE71B10000000000000001 /* AppDelegate+AgentChatNotifications.swift in Sources 
 		A17110000000000000000001 /* KeyboardShortcutSpaceKeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A17110000000000000000002 /* KeyboardShortcutSpaceKeyTests.swift */; };
 		C34670040000000000000001 /* KeyboardShortcutTestSettingsIsolation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C34670040000000000000002 /* KeyboardShortcutTestSettingsIsolation.swift */; };
 		87C609D63F03597AC12C8B0A /* LastSurfaceClosePreferenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2EE0C080FF0FCCE8A8CA930 /* LastSurfaceClosePreferenceTests.swift */; };
+		B01D70000000000000000002 /* LaunchdLocalTmuxServerBootstrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B01D70000000000000000001 /* LaunchdLocalTmuxServerBootstrapper.swift */; };
 		DA7A10CA710E000000000003 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = DA7A10CA710E000000000001 /* Localizable.xcstrings */; };
 		9A1600000000000000000002 /* LocalTmuxPrimaryRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A1600000000000000000001 /* LocalTmuxPrimaryRuntime.swift */; };
+		B01D60000000000000000002 /* LocalTmuxServerBootstrapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = B01D60000000000000000001 /* LocalTmuxServerBootstrapping.swift */; };
 		B01D10000000000000000002 /* LocalTmuxTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B01D10000000000000000001 /* LocalTmuxTransport.swift */; };
 		53750022A0B1C2D3E4F50022 /* MacAuthComposition.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53750023A0B1C2D3E4F50023 /* MacAuthComposition.swift */; };
 		D1F0A00600000000000000C1 /* MacPairedMacBackupBody.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1F0A00600000000000000C2 /* MacPairedMacBackupBody.swift */; };
@@ -2688,8 +2690,10 @@ C0DE71B10000000000000002 /* AppDelegate+AgentChatNotifications.swift */ = {isa =
 		A17110000000000000000002 /* KeyboardShortcutSpaceKeyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutSpaceKeyTests.swift; sourceTree = "<group>"; };
 		C34670040000000000000002 /* KeyboardShortcutTestSettingsIsolation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutTestSettingsIsolation.swift; sourceTree = "<group>"; };
 		F2EE0C080FF0FCCE8A8CA930 /* LastSurfaceClosePreferenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LastSurfaceClosePreferenceTests.swift; sourceTree = "<group>"; };
+		B01D70000000000000000001 /* LaunchdLocalTmuxServerBootstrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchdLocalTmuxServerBootstrapper.swift; sourceTree = "<group>"; };
 		DA7A10CA710E000000000001 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		9A1600000000000000000001 /* LocalTmuxPrimaryRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTmuxPrimaryRuntime.swift; sourceTree = "<group>"; };
+		B01D60000000000000000001 /* LocalTmuxServerBootstrapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTmuxServerBootstrapping.swift; sourceTree = "<group>"; };
 		B01D10000000000000000001 /* LocalTmuxTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalTmuxTransport.swift; sourceTree = "<group>"; };
 		53750023A0B1C2D3E4F50023 /* MacAuthComposition.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MacAuthComposition.swift; sourceTree = "<group>"; };
 		D1F0A00600000000000000C2 /* MacPairedMacBackupBody.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MacPairedMacBackupBody.swift; sourceTree = "<group>"; };
@@ -4806,6 +4810,8 @@ C0DE71B10000000000000002 /* AppDelegate+AgentChatNotifications.swift */ = {isa =
 					50FE16F529BD6FBA4FBDECFC /* RemoteTmuxController.swift */,
 					740600000000000000000001 /* RemoteTmuxController+Attach.swift */,
 					9A1400000000000000000001 /* RemoteTmuxController+LocalPrimary.swift */,
+					B01D70000000000000000001 /* LaunchdLocalTmuxServerBootstrapper.swift */,
+					B01D60000000000000000001 /* LocalTmuxServerBootstrapping.swift */,
 					B01D10000000000000000001 /* LocalTmuxTransport.swift */,
 					9A1600000000000000000001 /* LocalTmuxPrimaryRuntime.swift */,
 					740600000000000000000010 /* RemoteTmuxAttachWindowTarget.swift */,
@@ -6424,7 +6430,9 @@ C0DE71B10000000000000002 /* AppDelegate+AgentChatNotifications.swift */ = {isa =
 				D5671301D5671301D5671301 /* KeyboardShortcutSettingsFileStore+TerminalScrollSpeed.swift in Sources */,
 				A5F10011A1B2C3D4E5F60719 /* KeyboardShortcutSettingsFileStore.swift in Sources */,
 				C1713004C1713004C1713004 /* KeyboardShortcutSettingsLookup.swift in Sources */,
+				B01D70000000000000000002 /* LaunchdLocalTmuxServerBootstrapper.swift in Sources */,
 				9A1600000000000000000002 /* LocalTmuxPrimaryRuntime.swift in Sources */,
+				B01D60000000000000000002 /* LocalTmuxServerBootstrapping.swift in Sources */,
 				B01D10000000000000000002 /* LocalTmuxTransport.swift in Sources */,
 				53750022A0B1C2D3E4F50022 /* MacAuthComposition.swift in Sources */,
 				D1F0A00600000000000000C1 /* MacPairedMacBackupBody.swift in Sources */,

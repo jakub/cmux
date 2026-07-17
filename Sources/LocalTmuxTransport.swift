@@ -11,13 +11,16 @@ actor LocalTmuxTransport: RemoteTmuxTransport {
     nonisolated private let environment: [String: String]
     nonisolated private let defaultWorkingDirectory: String
     private let processExecutor: RemoteTmuxProcessExecutor
+    private let serverBootstrapper: any LocalTmuxServerBootstrapping
+    private var bootstrappedServerAwaitingFirstSession = false
 
     init(
         host: RemoteTmuxHost,
         shellExecutablePath: String = "/bin/sh",
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaultWorkingDirectory: String = FileManager.default.homeDirectoryForCurrentUser.path,
-        processExecutor: RemoteTmuxProcessExecutor = RemoteTmuxProcessExecutor()
+        processExecutor: RemoteTmuxProcessExecutor = RemoteTmuxProcessExecutor(),
+        serverBootstrapper: any LocalTmuxServerBootstrapping = LaunchdLocalTmuxServerBootstrapper()
     ) {
         self.host = host
         self.shellExecutablePath = shellExecutablePath
@@ -30,6 +33,7 @@ actor LocalTmuxTransport: RemoteTmuxTransport {
         self.environment = sanitizedEnvironment
         self.defaultWorkingDirectory = defaultWorkingDirectory
         self.processExecutor = processExecutor
+        self.serverBootstrapper = serverBootstrapper
     }
 
     func run(_ arguments: [String]) async throws -> RemoteTmuxCommandResult {
@@ -49,6 +53,26 @@ actor LocalTmuxTransport: RemoteTmuxTransport {
             arguments: invocation.arguments,
             environment: environment
         )
+    }
+
+    func prepareForSessionCreation() async throws {
+        let probe = try await runTmux(["display-message", "-p", "#{pid}"])
+        if probe.succeeded { return }
+        guard Self.indicatesNoServer(probe.stderr) else {
+            throw commandFailure(probe)
+        }
+        try await serverBootstrapper.startServer(
+            environment: environment,
+            shellExecutablePath: shellExecutablePath
+        )
+        bootstrappedServerAwaitingFirstSession = true
+    }
+
+    func sessionCreationDidSucceed() async throws {
+        guard bootstrappedServerAwaitingFirstSession else { return }
+        let result = try await runTmux(["set-option", "-s", "exit-empty", "on"])
+        guard result.succeeded else { throw commandFailure(result) }
+        bootstrappedServerAwaitingFirstSession = false
     }
 
     func prepareForControlBurst() async throws -> Bool { true }
@@ -89,11 +113,17 @@ actor LocalTmuxTransport: RemoteTmuxTransport {
         var sessionEnvironment = [
             "OP_BIOMETRIC_UNLOCK_ENABLED": environment["OP_BIOMETRIC_UNLOCK_ENABLED"] ?? "true",
         ]
+        if let sshAuthSocket = environment["SSH_AUTH_SOCK"], !sshAuthSocket.isEmpty {
+            sessionEnvironment["SSH_AUTH_SOCK"] = sshAuthSocket
+        }
         guard let integrationDirectory = environment["CMUX_SHELL_INTEGRATION_DIR"],
               TerminalSurface.shellIntegrationDirectoryExists(integrationDirectory) else {
             return RemoteTmuxSessionStartup(environment: sessionEnvironment)
         }
 
+        sessionEnvironment["CMUX_SHELL_INTEGRATION"] =
+            environment["CMUX_SHELL_INTEGRATION"] ?? "1"
+        sessionEnvironment["CMUX_SHELL_INTEGRATION_DIR"] = integrationDirectory
         var startupEnvironment = environment
         var managedKeys: Set<String> = []
         let command = TerminalSurface.applyManagedShellSpecificStartupEnvironment(

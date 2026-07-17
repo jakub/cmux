@@ -23,6 +23,9 @@ enum RemoteTmuxError: Error, Sendable, Equatable {
 
     /// The remote host has no tmux binary anywhere cmux's resolver probes.
     case tmuxNotFound(destination: String)
+
+    /// launchd could not start the user's first local tmux server.
+    case localServerBootstrapFailed(String)
 }
 
 extension RemoteTmuxError {
@@ -93,6 +96,12 @@ extension RemoteTmuxError {
                 Self.sanitizedDetail(destination),
                 RemoteTmuxVersion.minimumSupported.displayString
             )
+        case let .localServerBootstrapFailed(detail):
+            let format = String(
+                localized: "localTmux.primary.error.serverBootstrap",
+                defaultValue: "Could not start the local tmux server: %@"
+            )
+            return String(format: format, Self.sanitizedDetail(detail))
         }
     }
 

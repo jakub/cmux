@@ -153325,6 +153325,23 @@
         }
       }
     },
+    "localTmux.primary.error.serverBootstrap": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not start the local tmux server: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカル tmux サーバーを起動できませんでした：%@"
+          }
+        }
+      }
+    },
     "localTmux.primary.error.mirrorResolution": {
       "extractionState": "manual",
       "localizations": {

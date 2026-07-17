@@ -107,10 +107,11 @@ import Testing
         let invocations = try String(contentsOf: invocationLog, encoding: .utf8)
             .split(whereSeparator: \.isNewline)
             .map(String.init)
-        #expect(invocations.count == 1)
+        #expect(invocations.count == 2)
         #expect(invocations.allSatisfy { !$0.contains("ssh") })
-        #expect(invocations[0].contains("cmux-local-tmux new-session -d -P -F"))
-        #expect(invocations[0].hasSuffix("-s claude-work -c /tmp/work tree"))
+        #expect(invocations[0].contains("cmux-local-tmux display-message -p #{pid}"))
+        #expect(invocations[1].contains("cmux-local-tmux new-session -d -P -F"))
+        #expect(invocations[1].hasSuffix("-s claude-work -c /tmp/work tree"))
     }
 
     @Test func localPrimaryFirstServerIsOwnedByLaunchd() async throws {
@@ -125,6 +126,8 @@ import Testing
         environment["TMUX_TMPDIR"] = root.path
         environment.removeValue(forKey: "TMUX")
         environment.removeValue(forKey: "TMUX_PANE")
+        environment["CMUX_SOCKET_PATH"] = "do-not-leak-to-launchd"
+        environment["OP_SERVICE_ACCOUNT_TOKEN"] = "do-not-leak-to-launchd"
         let transport = LocalTmuxTransport(
             host: RemoteTmuxController.localPrimaryHost,
             environment: environment,
@@ -136,6 +139,13 @@ import Testing
             .path
         let serviceLabel = localTmuxLaunchdServiceLabel(socketPath: socketPath)
         let serviceTarget = "gui/\(getuid())/\(serviceLabel)"
+        defer {
+            _ = try? runProcess(
+                executable: "/bin/launchctl",
+                arguments: ["bootout", serviceTarget],
+                environment: environment
+            )
+        }
 
         do {
             _ = try await transport.createSession(
@@ -151,6 +161,13 @@ import Testing
             #expect(service.status == 0)
             #expect(service.stdout.contains("tmux"))
             #expect(service.stdout.contains("-D"))
+            #expect(!service.stdout.contains("do-not-leak-to-launchd"))
+
+            let exitEmpty = try await transport.runTmux([
+                "show-options", "-sv", "exit-empty",
+            ])
+            #expect(exitEmpty.succeeded)
+            #expect(exitEmpty.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "on")
         } catch {
             _ = try? await transport.runTmux(["kill-server"])
             _ = try? runProcess(
@@ -161,12 +178,70 @@ import Testing
             throw error
         }
 
-        _ = try? await transport.runTmux(["kill-server"])
-        _ = try? runProcess(
+        let killed = try await transport.runTmux(["kill-server"])
+        #expect(killed.succeeded)
+        let stoppedService = try runProcess(
             executable: "/bin/launchctl",
-            arguments: ["bootout", serviceTarget],
+            arguments: ["print", serviceTarget],
             environment: environment
         )
+        #expect(stoppedService.status == 0)
+        #expect(stoppedService.stdout.contains("state = not running"))
+    }
+
+    @Test func localPrimaryLeavesExistingServerOwnershipAndExitPolicyUntouched() async throws {
+        let root = URL(
+            fileURLWithPath: "/tmp/cmux-existing-\(String(UUID().uuidString.prefix(8)))",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["TMUX_TMPDIR"] = root.path
+        environment.removeValue(forKey: "TMUX")
+        environment.removeValue(forKey: "TMUX_PANE")
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            environment: environment,
+            defaultWorkingDirectory: root.path
+        )
+        do {
+            let start = try await transport.runTmux([
+                "new-session", "-d", "-s", "already-running",
+            ])
+            #expect(start.succeeded)
+            let policy = try await transport.runTmux([
+                "set-option", "-s", "exit-empty", "off",
+            ])
+            #expect(policy.succeeded)
+
+            _ = try await transport.createSession(
+                name: "cmux-added",
+                workingDirectory: nil
+            )
+            let exitEmpty = try await transport.runTmux([
+                "show-options", "-sv", "exit-empty",
+            ])
+            #expect(exitEmpty.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "off")
+
+            let socketPath = root
+                .appendingPathComponent("tmux-\(getuid())", isDirectory: true)
+                .appendingPathComponent("default", isDirectory: false)
+                .path
+            let serviceTarget =
+                "gui/\(getuid())/\(localTmuxLaunchdServiceLabel(socketPath: socketPath))"
+            let service = try runProcess(
+                executable: "/bin/launchctl",
+                arguments: ["print", serviceTarget],
+                environment: environment
+            )
+            #expect(service.status != 0)
+        } catch {
+            _ = try? await transport.runTmux(["kill-server"])
+            throw error
+        }
+        _ = try? await transport.runTmux(["kill-server"])
     }
 
     @Test func localPrimaryDefaultsImplicitWorkingDirectoryToHome() async throws {
@@ -279,9 +354,17 @@ import Testing
                 .map(String.init)
         } catch {
             _ = try? await transport.runTmux(["kill-server"])
+            bootoutLocalTmuxLaunchdService(
+                tmuxRoot: root,
+                environment: ["PATH": "/usr/bin:/bin"]
+            )
             throw error
         }
         _ = try? await transport.runTmux(["kill-server"])
+        bootoutLocalTmuxLaunchdService(
+            tmuxRoot: root,
+            environment: ["PATH": "/usr/bin:/bin"]
+        )
 
         let shimPath = try #require(startup.first)
         #expect(!shimPath.isEmpty)
@@ -329,13 +412,14 @@ import Testing
         let invocations = try String(contentsOf: invocationLog, encoding: .utf8)
             .split(whereSeparator: \.isNewline)
             .map(String.init)
-        #expect(invocations.count == 2)
+        #expect(invocations.count == 3)
         #expect(invocations.allSatisfy { !$0.contains("ssh") })
         #expect(invocations.allSatisfy { $0.contains("|TMUX=|TMUX_PANE=|TMUX_TMPDIR=/tmp/direct-lab") })
         #expect(invocations[0].contains("cmux-local-tmux list-sessions -F"))
-        #expect(invocations[1].hasPrefix("-c "))
-        #expect(invocations[1].contains("cmux-local-tmux new-session -d -P -F"))
-        #expect(invocations[1].contains("-s home-work -c /Users/tester"))
+        #expect(invocations[1].contains("cmux-local-tmux display-message -p #{pid}"))
+        #expect(invocations[2].hasPrefix("-c "))
+        #expect(invocations[2].contains("cmux-local-tmux new-session -d -P -F"))
+        #expect(invocations[2].contains("-s home-work -c /Users/tester"))
     }
 
     @Test func localTransportDiscoveryCreatesFirstSessionInHomeDirectory() async throws {
@@ -363,7 +447,8 @@ import Testing
         let transport = LocalTmuxTransport(
             host: RemoteTmuxController.localPrimaryHost,
             shellExecutablePath: fakeShell.path,
-            defaultWorkingDirectory: "/Users/tester"
+            defaultWorkingDirectory: "/Users/tester",
+            serverBootstrapper: NoopLocalTmuxServerBootstrapper()
         )
         let sessions = try await transport.discoverMirrorSessions(createIfEmpty: true)
 
@@ -470,11 +555,13 @@ import Testing
         } catch {
             connection.stop()
             _ = try? await transport.runTmux(["kill-server"])
+            bootoutLocalTmuxLaunchdService(tmuxRoot: root, environment: environment)
             throw error
         }
 
         connection.stop()
         _ = try? await transport.runTmux(["kill-server"])
+        bootoutLocalTmuxLaunchdService(tmuxRoot: root, environment: environment)
     }
 
     @Test func staleSSHAgentErrorDoesNotMaskPermissionDeniedAuthRequirement() {
@@ -904,6 +991,22 @@ import Testing
         )
     }
 
+    private func bootoutLocalTmuxLaunchdService(
+        tmuxRoot: URL,
+        environment: [String: String]
+    ) {
+        let socketPath = tmuxRoot
+            .appendingPathComponent("tmux-\(getuid())", isDirectory: true)
+            .appendingPathComponent("default", isDirectory: false)
+            .path
+        let label = localTmuxLaunchdServiceLabel(socketPath: socketPath)
+        _ = try? runProcess(
+            executable: "/bin/launchctl",
+            arguments: ["bootout", "gui/\(getuid())/\(label)"],
+            environment: environment
+        )
+    }
+
     private func runShell(
         _ command: String,
         environment: [String: String]
@@ -926,4 +1029,11 @@ import Testing
             String(decoding: stderrData, as: UTF8.self)
         )
     }
+}
+
+private actor NoopLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
+    func startServer(
+        environment _: [String: String],
+        shellExecutablePath _: String
+    ) async throws {}
 }

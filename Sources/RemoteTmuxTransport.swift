@@ -7,6 +7,8 @@ protocol RemoteTmuxTransport: Actor {
     nonisolated var validatesVersionBeforeSessionCreation: Bool { get }
 
     func run(_ arguments: [String]) async throws -> RemoteTmuxCommandResult
+    func prepareForSessionCreation() async throws
+    func sessionCreationDidSucceed() async throws
     func prepareForControlBurst() async throws -> Bool
     func shutdown() async
     nonisolated func spawnShutdown()
@@ -37,6 +39,10 @@ struct RemoteTmuxSessionOrderUpdate: Equatable, Sendable {
 extension RemoteTmuxTransport {
     nonisolated var validatesVersionBeforeSessionCreation: Bool { true }
 
+    func prepareForSessionCreation() async throws {}
+
+    func sessionCreationDidSucceed() async throws {}
+
     func listSessions() async throws -> [RemoteTmuxSession] {
         let result = try await runTmux([
             "list-sessions", "-F", RemoteTmuxSessionListParser.formatString,
@@ -58,6 +64,7 @@ extension RemoteTmuxTransport {
         if validatesVersionBeforeSessionCreation {
             try await assertMinimumTmuxVersion(checkClientWhenNoServer: true)
         }
+        try await prepareForSessionCreation()
         let startup = startupForCreatedSession()
         let result = try await runTmux(Self.createSessionArguments(
             name: name,
@@ -74,6 +81,7 @@ extension RemoteTmuxTransport {
                 )
             )
         }
+        try await sessionCreationDidSucceed()
         return session
     }
 
@@ -172,13 +180,16 @@ extension RemoteTmuxTransport {
         try await assertMinimumTmuxVersion(checkClientWhenNoServer: createIfEmpty)
         var sessions = try await listSessions()
         if sessions.isEmpty, createIfEmpty {
+            try await prepareForSessionCreation()
             let arguments = Self.createSessionArguments(
                 name: nil,
                 workingDirectory: workingDirectoryForCreatedSession(nil),
                 startup: startupForCreatedSession(),
                 reportsIdentity: false
             )
-            _ = try? await runTmux(arguments)
+            if let result = try? await runTmux(arguments), result.succeeded {
+                try await sessionCreationDidSucceed()
+            }
             sessions = try await listSessions()
         }
         return sessions

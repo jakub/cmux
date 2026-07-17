@@ -143,11 +143,23 @@ The important ownership split is:
   `LocalTmuxTransport` owns every localhost operation while local-primary mode is
   enabled: discovery, version checks, session creation, mutations, and control
   mode. Do not special-case these operations back into the controller.
-- `Sources/LocalTmuxTransport.swift` launches from the cmux GUI security context,
-  so a new tmux server inherits access to the user's unlocked login keychain.
-  It defaults `OP_BIOMETRIC_UNLOCK_ENABLED=true` for the direct tmux client and
-  each newly created session so 1Password CLI uses the unlocked desktop app even
-  when the tmux server already exists. An explicit user value, including
+- `Sources/LocalTmuxTransport.swift` probes the default socket before creating a
+  session. Existing servers are used unchanged. Only when cmux needs the first
+  session and no server exists does `LaunchdLocalTmuxServerBootstrapper` register
+  one transient, non-keepalive GUI launchd job running `tmux -D`. This puts the
+  server outside the cmux app coalition, so Dock background termination cannot
+  take the user's tmux sessions with it. There is no login item or installed
+  LaunchAgent, and cmux does not create a server merely because the app started.
+  The stable job identity is derived from the socket path, so tagged builds share
+  the normal default-socket server instead of creating a daemon zoo. Explicit
+  `TMUX_TMPDIR` values intentionally receive their own identity for test isolation.
+  After the first session exists, cmux restores tmux's `exit-empty=on`; the job
+  stops naturally with the server and is not respawned.
+- The launchd server receives only a small non-secret environment allowlist.
+  `LocalTmuxTransport` explicitly supplies session-scoped shell integration,
+  `SSH_AUTH_SOCK`, and `OP_BIOMETRIC_UNLOCK_ENABLED` values on every new session.
+  The latter defaults to `true`, so 1Password CLI uses the unlocked desktop app
+  even when the tmux server already exists; an explicit user value, including
   `false`, is preserved.
   It removes ambient `TMUX` and `TMUX_PANE` from every child so launching cmux
   inside another tmux client cannot accidentally target the parent server, while
