@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -137,6 +138,13 @@ import Testing
             .appendingPathComponent("tmux-\(getuid())", isDirectory: true)
             .appendingPathComponent("default", isDirectory: false)
             .path
+        let socketDirectory = URL(fileURLWithPath: socketPath).deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: socketDirectory,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: socketDirectory.path)
+        try createStaleUnixSocket(at: socketPath)
         let serviceLabel = localTmuxLaunchdServiceLabel(socketPath: socketPath)
         let serviceTarget = "gui/\(getuid())/\(serviceLabel)"
         defer {
@@ -956,6 +964,32 @@ import Testing
     private func writeExecutable(at url: URL, contents: String) throws {
         try contents.write(to: url, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    private func createStaleUnixSocket(at path: String) throws {
+        let descriptor = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { Darwin.close(descriptor) }
+
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = path.utf8CString.map { UInt8(bitPattern: $0) }
+        guard pathBytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
+            throw POSIXError(.ENAMETOOLONG)
+        }
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+            buffer.copyBytes(from: pathBytes)
+        }
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { socketAddress in
+                Darwin.bind(descriptor, socketAddress, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard result == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
     }
 
     private func localTmuxLaunchdServiceLabel(socketPath: String) -> String {
