@@ -70,6 +70,37 @@ import Testing
         #expect(sessions[1].name == "crlf")
     }
 
+    @Test func parsesPersistedCmuxSessionOrderWithoutCorruptingNames() {
+        let output = "$0:1:0:1780000000:1:A\n$1:1:0:1780000001:0:B\n$2:1:0:1780000002:2:C\n"
+        let sessions = RemoteTmuxSessionListParser.parse(output)
+
+        #expect(sessions.map(\.name) == ["A", "B", "C"])
+        #expect(sessions.map(\.cmuxOrder) == [1, 0, 2])
+    }
+
+    @Test func persistedCmuxSessionOrderSortsStablyAheadOfUnorderedSessions() {
+        let sessions = [
+            RemoteTmuxSession(
+                id: "$0", name: "A", windowCount: 1, attached: false,
+                createdUnix: 1780000000, cmuxOrder: 1
+            ),
+            RemoteTmuxSession(
+                id: "$1", name: "B", windowCount: 1, attached: false,
+                createdUnix: 1780000001, cmuxOrder: 0
+            ),
+            RemoteTmuxSession(
+                id: "$2", name: "C", windowCount: 1, attached: false,
+                createdUnix: 1780000002, cmuxOrder: 2
+            ),
+            RemoteTmuxSession(
+                id: "$3", name: "new", windowCount: 1, attached: false,
+                createdUnix: 1780000003, cmuxOrder: nil
+            ),
+        ]
+
+        #expect(RemoteTmuxSession.orderedForCmux(sessions).map(\.name) == ["B", "A", "C", "new"])
+    }
+
     @Test func rejectsControlCharSubstitutedOutput() {
         // Regression: against a non-UTF-8 remote tmux client, tmux sanitizes
         // control bytes in `-F` output to `_`. The previous tab-delimited format
