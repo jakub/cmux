@@ -167,6 +167,7 @@ import Testing
             )
 
             #expect(service.status == 0)
+            #expect(service.stdout.contains("state = running"))
             #expect(service.stdout.contains("tmux"))
             #expect(service.stdout.contains("-D"))
             #expect(!service.stdout.contains("do-not-leak-to-launchd"))
