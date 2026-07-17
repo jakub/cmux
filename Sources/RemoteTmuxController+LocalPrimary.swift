@@ -98,6 +98,56 @@ extension RemoteTmuxController {
         }
     }
 
+    /// Persists the canonical sidebar order into per-session tmux metadata.
+    /// Every reorder entrypoint converges on `TabManager.workspaceOrderDidChange`,
+    /// so this remains the one cmux→tmux mutation path.
+    func handleLocalPrimaryWorkspaceOrderChanged(in tabManager: TabManager) {
+        guard localPrimaryEnabled,
+              localPrimaryRuntime.tabManager === tabManager,
+              !localPrimaryRuntime.isApplyingAuthoritativeSessionOrder else { return }
+        let updates = localPrimarySessionOrderUpdates(in: tabManager)
+        guard !updates.isEmpty,
+              localPrimaryRuntime.requestSessionOrderPersistence(updates) else { return }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await runLocalPrimarySessionOrderPersistenceLoop()
+        }
+        localPrimaryRuntime.installSessionOrderTask(task)
+    }
+
+    func localPrimarySessionOrderUpdates(in tabManager: TabManager) -> [RemoteTmuxSessionOrderUpdate] {
+        tabManager.tabs.enumerated().compactMap { order, workspace in
+            guard let mirror = sessionMirrors.values.first(where: { mirror in
+                mirror.host.connectionHash == Self.localPrimaryHost.connectionHash
+                    && mirror.mirroredWorkspaceId == workspace.id
+            }) else { return nil }
+            let sessionId = (mirror.connection.sessionId ?? mirror.seededSessionId).map { "$\($0)" }
+            return RemoteTmuxSessionOrderUpdate(
+                sessionId: sessionId,
+                sessionName: mirror.sessionName,
+                order: order
+            )
+        }
+    }
+
+    private func runLocalPrimarySessionOrderPersistenceLoop() async {
+        defer { localPrimaryRuntime.finishSessionOrderPersistence() }
+        let transport = transport(for: Self.localPrimaryHost)
+        while !Task.isCancelled,
+              let request = localPrimaryRuntime.takeSessionOrderRequest() {
+            do {
+                try await transport.persistCmuxSessionOrder(request.updates)
+                try Task.checkCancellation()
+                localPrimaryRuntime.markSessionOrderPersisted(revision: request.revision)
+            } catch is CancellationError {
+                return
+            } catch {
+                Self.logger.error("local-tmux: session order persistence failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+        }
+    }
+
     private func scheduleLocalPrimaryReconciliation(activate: Bool) {
         guard localPrimaryRuntime.requestReconciliation(activate: activate) else { return }
         let task = Task { @MainActor [weak self] in
@@ -148,6 +198,7 @@ extension RemoteTmuxController {
             localPrimaryRuntime.pendingPreferredSession = session
             localPrimaryRuntime.shouldCreateRequestedSession = false
         }
+        sessions = localPrimaryRuntime.orderedSessions(sessions)
         if preferredSession == nil {
             preferredSession = sessions.first
         }
@@ -165,6 +216,7 @@ extension RemoteTmuxController {
             sessions: sessions,
             into: tabManager
         )
+        applyLocalPrimarySessionOrder(sessions, in: tabManager)
         guard !mirroredWorkspaceIDs.isEmpty else {
             throw RemoteTmuxError.unreachable(String(
                 localized: "localTmux.primary.error.noMirror",
@@ -209,6 +261,35 @@ extension RemoteTmuxController {
            let workspace = preferredWorkspace
             ?? tabManager.tabs.first(where: { mirroredWorkspaceIDs.contains($0.id) }) {
             tabManager.selectWorkspace(workspace)
+        }
+    }
+
+    private func applyLocalPrimarySessionOrder(
+        _ sessions: [RemoteTmuxSession],
+        in tabManager: TabManager
+    ) {
+        let workspaceIdBySessionId = Dictionary(uniqueKeysWithValues: sessionMirrors.values.compactMap { mirror -> (String, UUID)? in
+            guard mirror.host.connectionHash == Self.localPrimaryHost.connectionHash,
+                  let workspaceId = mirror.mirroredWorkspaceId,
+                  let sessionId = mirror.connection.sessionId ?? mirror.seededSessionId else { return nil }
+            return ("$\(sessionId)", workspaceId)
+        })
+        let workspaceIdBySessionName = Dictionary(uniqueKeysWithValues: sessionMirrors.values.compactMap { mirror -> (String, UUID)? in
+            guard mirror.host.connectionHash == Self.localPrimaryHost.connectionHash,
+                  let workspaceId = mirror.mirroredWorkspaceId else { return nil }
+            return (mirror.sessionName, workspaceId)
+        })
+        let orderedWorkspaceIds = sessions.compactMap { session in
+            workspaceIdBySessionId[session.id] ?? workspaceIdBySessionName[session.name]
+        }
+        guard !orderedWorkspaceIds.isEmpty else { return }
+
+        localPrimaryRuntime.isApplyingAuthoritativeSessionOrder = true
+        defer { localPrimaryRuntime.isApplyingAuthoritativeSessionOrder = false }
+        for (targetIndex, workspaceId) in orderedWorkspaceIds.enumerated() {
+            guard tabManager.tabs.indices.contains(targetIndex),
+                  tabManager.tabs[targetIndex].id != workspaceId else { continue }
+            _ = tabManager.reorderWorkspace(tabId: workspaceId, toIndex: targetIndex)
         }
     }
 

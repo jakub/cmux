@@ -101,6 +101,18 @@ import Testing
         #expect(RemoteTmuxSession.orderedForCmux(sessions).map(\.name) == ["B", "A", "C", "new"])
     }
 
+    @Test func persistedOrderMutationTargetsStableSessionId() {
+        let update = RemoteTmuxSessionOrderUpdate(
+            sessionId: "$7",
+            sessionName: "mutable-name",
+            order: 2
+        )
+
+        #expect(update.tmuxArguments == [
+            "set-option", "-t", "$7", "@cmux_order", "2",
+        ])
+    }
+
     @Test func rejectsControlCharSubstitutedOutput() {
         // Regression: against a non-UTF-8 remote tmux client, tmux sanitizes
         // control bytes in `-F` output to `_`. The previous tab-delimited format

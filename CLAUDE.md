@@ -170,6 +170,13 @@ The important ownership split is:
   wrapper recovers the four workspace/tab/surface/panel environment variables
   from `$TMUX_PANE`. Do not put these ids in tmux's server-global environment:
   multiple sessions and panes would overwrite one another.
+- tmux has no mutable native session order. Local-primary sidebar order is stored
+  as the per-session option `@cmux_order`. Every workspace reorder entrypoint
+  converges on `TabManager.workspaceOrderDidChange`, which persists the complete
+  local session order through `RemoteTmuxTransport`; reconciliation reads that
+  option and applies it back through `TabManager.reorderWorkspace`. Keep the
+  in-flight order overlay: it prevents a stale discovery from reverting the UI
+  while the tmux option writes are still completing.
 - `Sources/AppDelegate+LocalTmuxPrimary.swift` is the thin AppKit action/error adapter.
 - `RemoteTmuxController`, `TerminalController`, `TabManager`, and the socket
   coordinators contain small fail-closed guards. These are deliberate boundary

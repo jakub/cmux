@@ -1639,6 +1639,7 @@ class TabManager: ObservableObject {
     /// this hook).
     func workspaceOrderDidChange(movedWorkspaceIds: [UUID]) {
         guard !movedWorkspaceIds.isEmpty else { return }
+        AppDelegate.shared?.remoteTmuxController.handleLocalPrimaryWorkspaceOrderChanged(in: self)
         NotificationCenter.default.post(
             name: .workspaceOrderDidChange,
             object: self,

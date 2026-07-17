@@ -23,6 +23,17 @@ struct RemoteTmuxSessionStartup: Equatable, Sendable {
     var command: String? = nil
 }
 
+struct RemoteTmuxSessionOrderUpdate: Equatable, Sendable {
+    let sessionId: String?
+    let sessionName: String
+    let order: Int
+
+    var target: String { sessionId ?? sessionName }
+    var tmuxArguments: [String] {
+        ["set-option", "-t", target, "@cmux_order", String(order)]
+    }
+}
+
 extension RemoteTmuxTransport {
     nonisolated var validatesVersionBeforeSessionCreation: Bool { true }
 
@@ -171,6 +182,13 @@ extension RemoteTmuxTransport {
             sessions = try await listSessions()
         }
         return sessions
+    }
+
+    func persistCmuxSessionOrder(_ updates: [RemoteTmuxSessionOrderUpdate]) async throws {
+        for update in updates {
+            let result = try await runTmux(update.tmuxArguments)
+            guard result.succeeded else { throw commandFailure(result) }
+        }
     }
 
     @discardableResult

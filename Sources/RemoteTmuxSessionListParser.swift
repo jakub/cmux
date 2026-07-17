@@ -3,12 +3,13 @@ import Foundation
 /// Parses the delimited output of `tmux list-sessions -F` into sessions.
 ///
 /// The expected per-line format (set by ``RemoteTmuxTransport``) is:
-/// `#{session_id}:#{session_windows}:#{session_attached}:#{session_created}:#{session_name}`
+/// `#{session_id}:#{session_windows}:#{session_attached}:#{session_created}:#{@cmux_order}:#{session_name}`
 ///
 /// `session_name` is placed **last** because it is the only free-text field;
-/// the leading fields are a `$N` id, integer counts, and a unix timestamp, none
-/// of which contain the `:` delimiter. The name is therefore parsed as the whole
-/// remainder after the fourth delimiter, so a name is reproduced verbatim even
+/// the leading fields are a `$N` id, integer counts, a unix timestamp, and an
+/// optional cmux order, none of which contain the `:` delimiter. The name is
+/// therefore parsed as the whole remainder after the fifth delimiter, so it is
+/// reproduced verbatim even
 /// if it somehow contained a `:` (tmux already rewrites `:` in session names to
 /// `_`, so this is defense in depth).
 ///
@@ -35,7 +36,7 @@ enum RemoteTmuxSessionListParser {
     /// The `-F` format string this parser expects, ordered to match ``parse(_:)``
     /// with the free-text `session_name` last.
     static let formatString =
-        "#{session_id}:#{session_windows}:#{session_attached}:#{session_created}:#{session_name}"
+        "#{session_id}:#{session_windows}:#{session_attached}:#{session_created}:#{@cmux_order}:#{session_name}"
 
     /// Parses raw `list-sessions` stdout into structured sessions.
     ///
@@ -43,34 +44,39 @@ enum RemoteTmuxSessionListParser {
     /// - Returns: one ``RemoteTmuxSession`` per well-formed line, in input order.
     static func parse(_ output: String) -> [RemoteTmuxSession] {
         var sessions: [RemoteTmuxSession] = []
-        for rawLine in output.split(separator: "\n", omittingEmptySubsequences: true) {
-            var line = String(rawLine)
-            if line.last == "\r" {
-                line.removeLast()
-            }
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            let line = String(rawLine)
             if line.isEmpty { continue }
-            // Unbounded split: the first four fields are id/windows/attached/
-            // created, and the name (which may itself contain `:`) is reassembled
-            // from the remainder below via `fields[4...].joined`, so a name with
-            // embedded delimiters is preserved rather than truncated here.
+            // Unbounded split: the leading fields are id/windows/attached/
+            // created/order, and the name (which may itself contain `:`) is
+            // reassembled from the remainder below.
             let fields = line.components(separatedBy: fieldDelimiter)
-            // Need at least id + windows + attached + created + name.
+            // Accept the old five-field format so cached fixtures and older
+            // cooperating clients remain readable during rolling upgrades.
             guard fields.count >= 5 else { continue }
             let id = fields[0].trimmingCharacters(in: .whitespaces)
             guard !id.isEmpty else { continue }
             let windowCount = Int(fields[1].trimmingCharacters(in: .whitespaces)) ?? 0
             let attached = (Int(fields[2].trimmingCharacters(in: .whitespaces)) ?? 0) > 0
             let createdUnix = Int(fields[3].trimmingCharacters(in: .whitespaces))
-            // The name is the remainder, rejoined so an embedded delimiter (should
-            // one ever survive) is preserved rather than truncating the name.
-            let name = fields[4...].joined(separator: fieldDelimiter)
+            let hasOrderField = fields.count >= 6
+                && (fields[4].trimmingCharacters(in: .whitespaces).isEmpty
+                    || Int(fields[4].trimmingCharacters(in: .whitespaces)) != nil)
+            let cmuxOrder = hasOrderField
+                ? Int(fields[4].trimmingCharacters(in: .whitespaces))
+                : nil
+            let nameStartIndex = hasOrderField ? 5 : 4
+            // The name is the remainder, rejoined so an embedded delimiter
+            // (should one ever survive) is preserved rather than truncated.
+            let name = fields[nameStartIndex...].joined(separator: fieldDelimiter)
             sessions.append(
                 RemoteTmuxSession(
                     id: id,
                     name: name,
                     windowCount: windowCount,
                     attached: attached,
-                    createdUnix: createdUnix
+                    createdUnix: createdUnix,
+                    cmuxOrder: cmuxOrder
                 )
             )
         }

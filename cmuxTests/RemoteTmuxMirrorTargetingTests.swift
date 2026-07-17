@@ -98,6 +98,55 @@ struct RemoteTmuxMirrorTargetingTests {
         #expect(workspace.bonsplitController.allTabIds.isEmpty)
     }
 
+    @Test func localPrimarySidebarOrderMapsToStableTmuxSessionTargets() throws {
+        let controller = RemoteTmuxController(localPrimaryEnabled: true)
+        let manager = TabManager(createInitialWorkspace: false)
+        let host = RemoteTmuxController.localPrimaryHost
+        for (id, name) in [(0, "A"), (1, "B"), (2, "C")] {
+            cacheConnection(controller: controller, host: host, sessionName: name)
+            try controller.mirrorSession(
+                host: host,
+                sessionName: name,
+                sessionId: id,
+                into: manager
+            )
+        }
+        let workspaceB = try #require(manager.tabs.first(where: { $0.title == "B" }))
+        #expect(manager.reorderWorkspace(tabId: workspaceB.id, toIndex: 0))
+
+        #expect(controller.localPrimarySessionOrderUpdates(in: manager) == [
+            RemoteTmuxSessionOrderUpdate(sessionId: "$1", sessionName: "B", order: 0),
+            RemoteTmuxSessionOrderUpdate(sessionId: "$0", sessionName: "A", order: 1),
+            RemoteTmuxSessionOrderUpdate(sessionId: "$2", sessionName: "C", order: 2),
+        ])
+    }
+
+    @Test func localPrimaryPendingOrderOverridesStaleTmuxMetadataUntilObserved() {
+        let runtime = LocalTmuxPrimaryRuntime(isEnabled: true)
+        let updates = [
+            RemoteTmuxSessionOrderUpdate(sessionId: "$1", sessionName: "B", order: 0),
+            RemoteTmuxSessionOrderUpdate(sessionId: "$0", sessionName: "A", order: 1),
+            RemoteTmuxSessionOrderUpdate(sessionId: "$2", sessionName: "C", order: 2),
+        ]
+        let stale = [
+            RemoteTmuxSession(id: "$0", name: "A", windowCount: 1, attached: false, createdUnix: nil, cmuxOrder: 0),
+            RemoteTmuxSession(id: "$1", name: "B", windowCount: 1, attached: false, createdUnix: nil, cmuxOrder: 1),
+            RemoteTmuxSession(id: "$2", name: "C", windowCount: 1, attached: false, createdUnix: nil, cmuxOrder: 2),
+        ]
+        #expect(runtime.requestSessionOrderPersistence(updates))
+        let request = runtime.takeSessionOrderRequest()
+        runtime.markSessionOrderPersisted(revision: request?.revision ?? 0)
+
+        #expect(runtime.orderedSessions(stale).map(\.name) == ["B", "A", "C"])
+
+        let observed = [
+            RemoteTmuxSession(id: "$0", name: "A", windowCount: 1, attached: false, createdUnix: nil, cmuxOrder: 1),
+            RemoteTmuxSession(id: "$1", name: "B", windowCount: 1, attached: false, createdUnix: nil, cmuxOrder: 0),
+            RemoteTmuxSession(id: "$2", name: "C", windowCount: 1, attached: false, createdUnix: nil, cmuxOrder: 2),
+        ]
+        #expect(runtime.orderedSessions(observed).map(\.name) == ["B", "A", "C"])
+    }
+
     @Test func remotePreferenceStillEnablesTheEngineWithoutLocalPrimaryMode() throws {
         let suiteName = "RemoteTmuxMirrorTargetingTests.\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
