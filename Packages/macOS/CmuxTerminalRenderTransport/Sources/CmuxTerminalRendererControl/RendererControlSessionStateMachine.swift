@@ -24,6 +24,7 @@ public struct RendererControlSessionStateMachine: Sendable {
     private var highestPresentationGenerations: [UUID: UInt64] = [:]
     private var lastSceneSequences: [UUID: (canonical: UInt64, presentation: UInt64)] = [:]
     private var readyPresentations: Set<UUID> = []
+    private var pendingRemovalAcknowledgements: [PresentationLifetime: RendererPresentationRemoval] = [:]
     private var nextDaemonSequence: UInt64? = 1
     private var nextWorkerSequence: UInt64? = 1
 
@@ -56,6 +57,7 @@ public struct RendererControlSessionStateMachine: Sendable {
             highestPresentationGenerations.removeAll(keepingCapacity: false)
             lastSceneSequences.removeAll(keepingCapacity: false)
             readyPresentations.removeAll(keepingCapacity: false)
+            pendingRemovalAcknowledgements.removeAll(keepingCapacity: false)
             throw error
         }
     }
@@ -161,6 +163,10 @@ public struct RendererControlSessionStateMachine: Sendable {
             presentations.removeValue(forKey: value.presentationID)
             lastSceneSequences.removeValue(forKey: value.presentationID)
             readyPresentations.remove(value.presentationID)
+            pendingRemovalAcknowledgements[PresentationLifetime(
+                id: value.presentationID,
+                generation: value.presentationGeneration
+            )] = value
 
         case let .semanticScene(value):
             guard let attached = presentations[value.presentationID],
@@ -224,6 +230,18 @@ public struct RendererControlSessionStateMachine: Sendable {
             }
             readyPresentations.insert(value.presentationID)
 
+        case let .presentationRemoved(value):
+            let lifetime = PresentationLifetime(
+                id: value.presentationID,
+                generation: value.presentationGeneration
+            )
+            guard let removal = pendingRemovalAcknowledgements[lifetime],
+                  removal.terminalID == value.terminalID,
+                  removal.terminalEpoch == value.terminalEpoch else {
+                throw RendererControlError.invalidTransition
+            }
+            pendingRemovalAcknowledgements.removeValue(forKey: lifetime)
+
         case .shutdown, .fatal:
             presentations.removeAll(keepingCapacity: false)
             retiredPresentations.removeAll(keepingCapacity: false)
@@ -232,6 +250,7 @@ public struct RendererControlSessionStateMachine: Sendable {
             highestPresentationGenerations.removeAll(keepingCapacity: false)
             lastSceneSequences.removeAll(keepingCapacity: false)
             readyPresentations.removeAll(keepingCapacity: false)
+            pendingRemovalAcknowledgements.removeAll(keepingCapacity: false)
             phase = .terminal
         }
     }

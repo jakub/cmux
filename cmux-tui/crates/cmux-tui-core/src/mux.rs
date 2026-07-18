@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -71,6 +71,7 @@ pub type SurfaceResizeReporter = Arc<dyn Fn(SurfaceId, (u16, u16), Option<u64>) 
 
 const TERMINAL_DIMENSION_MAX: u16 = 10_000;
 const TERMINAL_INITIAL_INPUT_DEADLINE: Duration = Duration::from_secs(30);
+const RENDERER_PRESENTATION_REMOVAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 fn terminal_initial_input_deadline() -> Duration {
     #[cfg(test)]
@@ -1488,6 +1489,16 @@ struct RendererPresentationRuntime {
     bound_renderer_epoch: Mutex<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct RendererPresentationRemovalFence {
+    workspace_uuid: WorkspaceUuid,
+    renderer_epoch: u64,
+    terminal_id: uuid::Uuid,
+    terminal_epoch: u64,
+    presentation_id: uuid::Uuid,
+    presentation_generation: u64,
+}
+
 impl RendererPresentationRuntime {
     /// Linearizes the configure path with an asynchronous WorkerReady event.
     /// Exactly one caller may bind a presentation to a given worker epoch.
@@ -1854,6 +1865,8 @@ pub struct Mux {
     renderer_presentations: Mutex<RendererPresentationRuntimes>,
     renderer_presentation_generations: Mutex<BTreeMap<crate::PresentationId, u64>>,
     renderer_release_routes: Mutex<RendererReleaseRoutes>,
+    renderer_removal_waiters:
+        Mutex<HashMap<RendererPresentationRemovalFence, SyncSender<()>>>,
     ensure_terminal_lock: Mutex<()>,
     pairing: PairingBroker,
     #[cfg(test)]
@@ -2023,6 +2036,7 @@ impl Mux {
             renderer_presentations: Mutex::new(RendererPresentationRuntimes::default()),
             renderer_presentation_generations: Mutex::new(BTreeMap::new()),
             renderer_release_routes: Mutex::new(RendererReleaseRoutes::default()),
+            renderer_removal_waiters: Mutex::new(HashMap::new()),
             ensure_terminal_lock: Mutex::new(()),
             pairing: PairingBroker::new(),
             #[cfg(test)]
@@ -4220,13 +4234,70 @@ impl Mux {
             );
         }
         let runtime = self.renderer_presentations.lock().unwrap().get(&presentation_id).cloned();
-        if let Some(runtime) = runtime {
-            if runtime.client != client {
-                anyhow::bail!("presentation {presentation_id} is owned by another client");
-            }
-            self.remove_renderer_runtime_if_current(&runtime);
+        let Some(runtime) = runtime else { return Ok(()) };
+        if runtime.client != client {
+            anyhow::bail!("presentation {presentation_id} is owned by another client");
         }
-        Ok(())
+        let removed = self
+            .renderer_presentations
+            .lock()
+            .unwrap()
+            .remove_if_current(presentation_id, &runtime);
+        let Some(removed) = removed else { return Ok(()) };
+
+        let (renderer_epoch, removal) = {
+            let scene = removed.scene.lock().unwrap();
+            scene.canceled.store(true, Ordering::Release);
+            scene.control.detach();
+            (
+                scene.renderer_epoch,
+                RendererPresentationRemoval {
+                    terminal_id: removed.attachment.terminal_id,
+                    terminal_epoch: removed.attachment.terminal_epoch,
+                    presentation_id: removed.attachment.presentation_id,
+                    presentation_generation: removed.attachment.presentation_generation,
+                },
+            )
+        };
+        let fence = RendererPresentationRemovalFence {
+            workspace_uuid: removed.workspace_uuid,
+            renderer_epoch,
+            terminal_id: removal.terminal_id,
+            terminal_epoch: removal.terminal_epoch,
+            presentation_id: removal.presentation_id,
+            presentation_generation: removal.presentation_generation,
+        };
+        let supervisor = self
+            .renderer_supervisor
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("renderer supervisor is not installed"))?;
+        let (acknowledged, acknowledgement) = std::sync::mpsc::sync_channel(1);
+        if self
+            .renderer_removal_waiters
+            .lock()
+            .unwrap()
+            .insert(fence, acknowledged)
+            .is_some()
+        {
+            anyhow::bail!("renderer presentation removal is already pending");
+        }
+        if let Err(error) = supervisor.send_if_epoch(
+            removed.workspace_uuid,
+            renderer_epoch,
+            vec![RendererControlMessage::RemovePresentation(removal)],
+        ) {
+            self.renderer_removal_waiters.lock().unwrap().remove(&fence);
+            return Err(error.into());
+        }
+        match acknowledgement.recv_timeout(RENDERER_PRESENTATION_REMOVAL_TIMEOUT) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.renderer_removal_waiters.lock().unwrap().remove(&fence);
+                anyhow::bail!("renderer presentation removal was not acknowledged: {error}")
+            }
+        }
     }
 
     pub(crate) fn release_renderer_frame(
@@ -4450,6 +4521,24 @@ impl Mux {
                     status,
                     reason: Some(reason.into()),
                 });
+            }
+            RendererSupervisorEvent::PresentationRemoved {
+                workspace_uuid,
+                renderer_epoch,
+                removal,
+                ..
+            } => {
+                let fence = RendererPresentationRemovalFence {
+                    workspace_uuid,
+                    renderer_epoch,
+                    terminal_id: removal.terminal_id,
+                    terminal_epoch: removal.terminal_epoch,
+                    presentation_id: removal.presentation_id,
+                    presentation_generation: removal.presentation_generation,
+                };
+                if let Some(waiter) = self.renderer_removal_waiters.lock().unwrap().remove(&fence) {
+                    let _ = waiter.send(());
+                }
             }
             RendererSupervisorEvent::PresentationReady {
                 workspace_uuid,

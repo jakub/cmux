@@ -56,7 +56,7 @@ protocol TerminalBackendClient: Sendable {
     func detachPresentation(
         presentationID: UUID,
         from binding: TerminalBackendTerminalBinding?
-    ) async
+    ) async throws
 
     func releaseFrame(_ release: TerminalRenderFrameRelease) async
 }

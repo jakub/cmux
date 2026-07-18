@@ -1163,7 +1163,7 @@ actor TerminalBackendClientCoordinator:
                     connection: connection
                 )
             } else {
-                await removeRendererPresentation(
+                try await removeRendererPresentation(
                     presentationID: presentation.presentationID,
                     connection: connection
                 )
@@ -1240,7 +1240,7 @@ actor TerminalBackendClientCoordinator:
             outcome.install(response)
         case .reparent(let workspaceID):
             if let presentation {
-                await removeRendererPresentation(
+                try await removeRendererPresentation(
                     presentationID: presentation.presentationID,
                     connection: connection
                 )
@@ -1280,7 +1280,7 @@ actor TerminalBackendClientCoordinator:
                 record.binding.appSurfaceID == binding.appSurfaceID ? identifier : nil
             }
             for presentationID in presentationIDs {
-                await removeRendererPresentation(
+                try await removeRendererPresentation(
                     presentationID: presentationID,
                     connection: connection
                 )
@@ -1463,14 +1463,14 @@ actor TerminalBackendClientCoordinator:
     func detachPresentation(
         presentationID: UUID,
         from binding: TerminalBackendTerminalBinding?
-    ) async {
+    ) async throws {
         guard let record = rendererPresentations[presentationID] else { return }
         if let binding, binding.appSurfaceID != record.binding.appSurfaceID { return }
         guard let connection = try? await connectedSession(for: record.binding) else {
             rendererPresentations.removeValue(forKey: presentationID)
             return
         }
-        await removeRendererPresentation(
+        try await removeRendererPresentation(
             presentationID: presentationID,
             connection: connection
         )
@@ -1592,8 +1592,8 @@ actor TerminalBackendClientCoordinator:
     private func removeRendererPresentation(
         presentationID: UUID,
         connection: TerminalBackendConnectedSession
-    ) async {
-        guard let record = rendererPresentations.removeValue(forKey: presentationID) else {
+    ) async throws {
+        guard let record = rendererPresentations[presentationID] else {
             return
         }
         if record.receipt != nil,
@@ -1605,11 +1605,12 @@ actor TerminalBackendClientCoordinator:
             )
         }
         if record.receipt != nil {
-            try? await connection.session.detachRendererPresentation(
+            try await connection.session.detachRendererPresentation(
                 id: record.backendID,
                 expectedGeneration: record.canonicalGeneration
             )
         }
+        rendererPresentations.removeValue(forKey: presentationID)
         try? await connection.session.closePresentation(id: record.backendID)
     }
 

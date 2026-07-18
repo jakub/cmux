@@ -191,11 +191,11 @@ public actor TerminalRenderFrameReceiver {
         case CMUX_TERMINAL_RENDER_STATUS_TIMED_OUT.rawValue:
             return .timedOut
         case CMUX_TERMINAL_RENDER_STATUS_INVALID_MESSAGE.rawValue:
-            return .dropped(.malformedMachMessage)
+            return .dropped(.malformedMachMessage, release: nil)
         case CMUX_TERMINAL_RENDER_STATUS_CAPABILITY_MISMATCH.rawValue:
-            return .dropped(.capabilityMismatch)
+            return .dropped(.capabilityMismatch, release: nil)
         case CMUX_TERMINAL_RENDER_STATUS_PEER_MISMATCH.rawValue:
-            return .dropped(.peerIdentityMismatch)
+            return .dropped(.peerIdentityMismatch, release: nil)
         case CMUX_TERMINAL_RENDER_STATUS_SUCCESS.rawValue:
             break
         default:
@@ -204,30 +204,36 @@ public actor TerminalRenderFrameReceiver {
 
         guard let encodedMetadata = rawResult.metadata else {
             Self.releaseSurfaceRight(rawResult.surfacePort)
-            return .dropped(.malformedMachMessage)
+            return .dropped(.malformedMachMessage, release: nil)
         }
         let metadata: TerminalRenderFrameMetadata
         do {
             metadata = try codec.decode(encodedMetadata)
         } catch let error as TerminalRenderFrameProtocolError {
             Self.releaseSurfaceRight(rawResult.surfacePort)
-            return .dropped(.malformedMetadata(error))
+            return .dropped(.malformedMetadata(error), release: nil)
         }
 
         var tentativeAcceptance = acceptance
-        if let rejection = tentativeAcceptance.accept(metadata, against: fence) {
-            Self.releaseSurfaceRight(rawResult.surfacePort)
-            return .dropped(.stale(rejection))
-        }
+        let rejection = tentativeAcceptance.accept(metadata, against: fence)
 
         guard let importedSurface = cmux_terminal_render_surface_right_import(
             rawResult.surfacePort
         ) else {
-            return .dropped(.surfaceImportFailed)
+            return .dropped(.surfaceImportFailed, release: nil)
         }
         let surface = TerminalRenderSurfaceHandle(surface: importedSurface)
         guard surfaceDescriptorMatches(surface, metadata: metadata) else {
-            return .dropped(.surfaceDescriptorMismatch)
+            return .dropped(.surfaceDescriptorMismatch, release: nil)
+        }
+        if let rejection {
+            return .dropped(
+                .stale(rejection),
+                release: TerminalRenderFrameRelease(
+                    metadata: metadata,
+                    surfaceID: surface.identifier
+                )
+            )
         }
 
         acceptance = tentativeAcceptance
@@ -240,6 +246,28 @@ public actor TerminalRenderFrameReceiver {
             surface: surface,
             workerIdentity: authenticatedWorker
         ))
+    }
+
+    /// Drains frames after the worker acknowledged that this presentation can
+    /// no longer publish. Drained surfaces never reach Metal, so their exact
+    /// leases can be returned immediately.
+    public func drainQuiescedFrames() async throws -> [TerminalRenderFrameRelease] {
+        var releases: [TerminalRenderFrameRelease] = []
+        while true {
+            switch try await receive(timeoutMilliseconds: 0) {
+            case .frame(let frame):
+                releases.append(TerminalRenderFrameRelease(
+                    metadata: frame.metadata,
+                    surfaceID: frame.surface.identifier
+                ))
+            case .dropped(_, let release):
+                if let release {
+                    releases.append(release)
+                }
+            case .timedOut:
+                return releases
+            }
+        }
     }
 
     /// Destroys the receive right, waking a pending receive and rejecting future calls.

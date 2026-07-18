@@ -117,14 +117,21 @@ public actor RendererWorkerRuntime {
             switch message {
             case .bootstrap:
                 throw RendererWorkerRuntimeError.duplicateBootstrap
-            case .ready, .needsFullScene, .fatal, .presentationReady:
+            case .ready, .needsFullScene, .fatal, .presentationReady, .presentationRemoved:
                 throw RendererWorkerRuntimeError.commandAfterTermination
             case let .upsertPresentation(attachment):
                 try await upsert(attachment, bootstrap: bootstrap)
                 return RendererWorkerRuntimeResult()
             case let .removePresentation(removal):
                 try await remove(removal)
-                return RendererWorkerRuntimeResult()
+                return RendererWorkerRuntimeResult(replies: [
+                    .presentationRemoved(try RendererPresentationRemoved(
+                        terminalID: removal.terminalID,
+                        terminalEpoch: removal.terminalEpoch,
+                        presentationID: removal.presentationID,
+                        presentationGeneration: removal.presentationGeneration
+                    )),
+                ])
             case let .semanticScene(scene):
                 let replies = try await apply(scene, bootstrap: bootstrap)
                 return RendererWorkerRuntimeResult(replies: replies)
