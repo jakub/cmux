@@ -17,7 +17,7 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
         processExecutor: RemoteTmuxProcessExecutor = RemoteTmuxProcessExecutor(),
         fileManager: FileManager = .default,
         userID: uid_t = getuid(),
-        readinessTimeout: TimeInterval = 5
+        readinessTimeout: TimeInterval = 15
     ) {
         self.processExecutor = processExecutor
         self.fileManager = fileManager
@@ -31,6 +31,13 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
     ) async throws {
         let identity = LocalTmuxLaunchdIdentity(environment: environment, userID: userID)
         try prepareSocketDirectory(identity.socketDirectory)
+        // The caller has already proved that no server responds. Preserve the
+        // inode that failed that probe before inspecting launchd: another cmux
+        // transport may already be bootstrapping the stable-label job, and its
+        // xpcproxy phase can coexist with this stale socket for several seconds.
+        // Treating mere socket existence as readiness would let tmux promote a
+        // concurrent new-session client into a second, competing server.
+        let staleSocketIdentity = LocalTmuxSocketFileIdentity(path: identity.socketPath)
         let serviceTarget = "gui/\(userID)/\(identity.serviceLabel)"
         let launchEnvironment = Self.launchEnvironment(from: environment)
         let existing = try await runLaunchctl(
@@ -39,7 +46,7 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
         )
 
         if existing.succeeded, !Self.isStoppedService(existing.stdout) {
-            try await waitForSocket(identity)
+            try await waitForSocket(identity, replacing: staleSocketIdentity)
             return
         }
         if existing.succeeded {
@@ -48,8 +55,6 @@ actor LaunchdLocalTmuxServerBootstrapper: LocalTmuxServerBootstrapping {
                 environment: launchEnvironment
             )
         }
-        let staleSocketIdentity = LocalTmuxSocketFileIdentity(path: identity.socketPath)
-
         let plistURL = fileManager.temporaryDirectory.appendingPathComponent(
             "\(identity.serviceLabel).\(UUID().uuidString).plist",
             isDirectory: false
