@@ -198,6 +198,84 @@ import Testing
         #expect(stoppedService.stdout.contains("state = not running"))
     }
 
+    @Test func localPrimaryColdLaunchdJobReplacesStaleSocketBeforeReady() async throws {
+        let root = URL(
+            fileURLWithPath: "/tmp/cmux-launchd-cold-\(String(UUID().uuidString.prefix(8)))",
+            isDirectory: true
+        )
+        let socketDirectory = root.appendingPathComponent("tmux-\(getuid())", isDirectory: true)
+        let socketPath = socketDirectory.appendingPathComponent("default").path
+        try FileManager.default.createDirectory(
+            at: socketDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try createStaleUnixSocket(at: socketPath)
+        let staleSocketIdentity = try #require(fileIdentity(at: socketPath))
+
+        var environment = ProcessInfo.processInfo.environment
+        environment["TMUX_TMPDIR"] = root.path
+        environment.removeValue(forKey: "TMUX")
+        environment.removeValue(forKey: "TMUX_PANE")
+        let tmuxPath = try #require(tmuxExecutablePath(environment: environment))
+
+        let delayedLauncher = root.appendingPathComponent("delayed-tmux-server")
+        try writeExecutable(
+            at: delayedLauncher,
+            contents: """
+            #!/bin/sh
+            /bin/sleep 6
+            /bin/rm -f -- '\(socketPath)'
+            exec '\(tmuxPath)' -D
+            """
+        )
+        let serviceLabel = localTmuxLaunchdServiceLabel(socketPath: socketPath)
+        let serviceTarget = "gui/\(getuid())/\(serviceLabel)"
+        let jobURL = root.appendingPathComponent("delayed-tmux-server.plist")
+        let jobEnvironment = [
+            "HOME": environment["HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.path,
+            "PATH": environment["PATH"] ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+            "TMUX_TMPDIR": root.path,
+            "USER": environment["USER"] ?? NSUserName(),
+        ]
+        try writeLaunchdJob(
+            at: jobURL,
+            label: serviceLabel,
+            programArguments: [delayedLauncher.path],
+            environment: jobEnvironment
+        )
+        let bootstrap = try runProcess(
+            executable: "/bin/launchctl",
+            arguments: ["bootstrap", "gui/\(getuid())", jobURL.path],
+            environment: environment
+        )
+        try #require(bootstrap.status == 0)
+        defer {
+            _ = try? runProcess(
+                executable: "/bin/launchctl",
+                arguments: ["bootout", serviceTarget],
+                environment: environment
+            )
+        }
+
+        let serverBootstrapper = LaunchdLocalTmuxServerBootstrapper()
+        try await serverBootstrapper.startServer(
+            environment: environment,
+            shellExecutablePath: "/bin/sh"
+        )
+
+        let readySocketIdentity = try #require(fileIdentity(at: socketPath))
+        try #require(readySocketIdentity != staleSocketIdentity)
+        let transport = LocalTmuxTransport(
+            host: RemoteTmuxController.localPrimaryHost,
+            environment: environment,
+            defaultWorkingDirectory: root.path
+        )
+        let ready = try await transport.runTmux(["display-message", "-p", "#{pid}"])
+        #expect(ready.succeeded)
+    }
+
     @Test func localPrimaryLeavesExistingServerOwnershipAndExitPolicyUntouched() async throws {
         let root = URL(
             fileURLWithPath: "/tmp/cmux-existing-\(String(UUID().uuidString.prefix(8)))",
@@ -991,6 +1069,51 @@ import Testing
         guard result == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
+    }
+
+    private func fileIdentity(at path: String) -> String? {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return nil }
+        return "\(info.st_dev):\(info.st_ino)"
+    }
+
+    private func tmuxExecutablePath(environment: [String: String]) -> String? {
+        let pathCandidates = (environment["PATH"] ?? "")
+            .split(separator: ":")
+            .map { "\($0)/tmux" }
+        let fallbackCandidates = [
+            "/opt/homebrew/bin/tmux",
+            "/usr/local/bin/tmux",
+            "/opt/local/bin/tmux",
+            "/usr/bin/tmux",
+        ]
+        return (pathCandidates + fallbackCandidates).first {
+            FileManager.default.isExecutableFile(atPath: $0)
+        }
+    }
+
+    private func writeLaunchdJob(
+        at url: URL,
+        label: String,
+        programArguments: [String],
+        environment: [String: String]
+    ) throws {
+        let plist: [String: Any] = [
+            "Label": label,
+            "ProgramArguments": programArguments,
+            "EnvironmentVariables": environment,
+            "RunAtLoad": true,
+            "KeepAlive": false,
+            "ProcessType": "Background",
+            "StandardOutPath": "/dev/null",
+            "StandardErrorPath": "/dev/null",
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: plist,
+            format: .xml,
+            options: 0
+        )
+        try data.write(to: url, options: .atomic)
     }
 
     private func localTmuxLaunchdServiceLabel(socketPath: String) -> String {
