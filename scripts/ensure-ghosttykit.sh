@@ -108,23 +108,20 @@ LEGACY_LOCAL_SHA_STAMP="$LOCAL_XCFRAMEWORK/.ghostty_sha"
 LOCK_DIR="$CACHE_ROOT/$GHOSTTY_KEY.lock"
 GHOSTTYKIT_CHECKSUMS_FILE="${CMUX_GHOSTTYKIT_CHECKSUMS_FILE:-$SCRIPT_DIR/ghosttykit-checksums.txt}"
 GHOSTTYKIT_ARCHIVE_VALIDATOR="${CMUX_GHOSTTYKIT_ARCHIVE_VALIDATOR:-$SCRIPT_DIR/validate-xcframework-archive.py}"
+GHOSTTYKIT_CACHE_LOCK_HELPER="$SCRIPT_DIR/ghosttykit-cache-lock.sh"
 
 mkdir -p "$CACHE_ROOT"
 
 echo "==> Ghostty build key: $GHOSTTY_KEY"
 
-LOCK_TIMEOUT=300
-LOCK_START=$SECONDS
-while ! mkdir "$LOCK_DIR" 2>/dev/null; do
-  if (( SECONDS - LOCK_START > LOCK_TIMEOUT )); then
-    echo "==> Lock stale (>${LOCK_TIMEOUT}s), removing and retrying..."
-    rmdir "$LOCK_DIR" 2>/dev/null || rm -rf "$LOCK_DIR"
-    continue
-  fi
-  echo "==> Waiting for GhosttyKit cache lock for $GHOSTTY_KEY..."
-  sleep 1
-done
-trap 'rmdir "$LOCK_DIR" >/dev/null 2>&1 || true' EXIT
+# shellcheck source=/dev/null
+source "$GHOSTTYKIT_CACHE_LOCK_HELPER"
+ghosttykit_cache_lock_acquire \
+  "$LOCK_DIR" \
+  "${CMUX_GHOSTTYKIT_LOCK_WAIT_SECONDS:-1800}" \
+  "${CMUX_GHOSTTYKIT_OWNERLESS_STALE_SECONDS:-300}" \
+  "${CMUX_GHOSTTYKIT_LOCK_POLL_SECONDS:-1}"
+trap 'ghosttykit_cache_lock_release' EXIT
 
 try_fetch_prebuilt_xcframework() {
   # Only attempt when Ghostty submodule is clean — dirty trees won't match any
