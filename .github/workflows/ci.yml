@@ -162,6 +162,9 @@ jobs:
       - name: Validate GhosttyKit checksum verification
         run: ./tests/test_ci_ghosttykit_checksum_verification.sh
 
+      - name: Validate GhosttyKit cache lock ownership
+        run: ./tests/test_ghosttykit_cache_lock.sh
+
       - name: Validate Zig install without sudo
         run: ./tests/test_install_zig_ci_no_sudo.sh
 
